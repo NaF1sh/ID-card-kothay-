@@ -1,22 +1,14 @@
-# Local builds, previews, and backup archives
+# Builds
+/MuseumDetective
 /build/
-/dist/
+*.exe
 *.o
 *.obj
-*.exe
-!/ID Card Kothay.exe
 
 # Local player scores
 scoreboard.txt
 scoreboard.txt.tmp
 
-# Original voice recordings; runtime audio is in assets/audio/
-/ElevenLabs_*.mp3
-
-# Editor and local environment files
+# Editor files
 .vscode/
 .idea/
-.env
-.env.*
-!.env.example
-
