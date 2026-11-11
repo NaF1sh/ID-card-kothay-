@@ -1,10 +1,3 @@
-// ============================================================
-// MUSEUM DETECTIVE CASE
-// 2D top-down stealth game - GLUT / OpenGL
-// game.h : constants, structures, global variables and
-//          function prototypes shared by every .cpp file
-// ============================================================
-
 #ifndef GAME_H
 #define GAME_H
 
@@ -14,19 +7,10 @@
 #include <string.h>
 #include <math.h>
 
-// freeglut sends Shift as a special key with these codes
-// (they are in freeglut_ext.h, not in glut.h)
 #ifndef GLUT_KEY_SHIFT_L
 #define GLUT_KEY_SHIFT_L 0x0070
 #define GLUT_KEY_SHIFT_R 0x0071
 #endif
-
-// ============================================================
-// SCREEN AND WORLD SIZE
-// ============================================================
-// glOrtho(-500, 500, -300, 300) gives a 1000 x 600 view.
-// The museum (world) is 1000 x 478. The HUD uses the band
-// at the bottom (58 units) and at the top (64 units).
 
 #define VIEW_W 1000.0f
 #define VIEW_H 600.0f
@@ -37,16 +21,14 @@
 
 #define PI 3.14159265f
 
-// ============================================================
-// BASIC STRUCTURES
-// ============================================================
+#define CAUGHT_LINE1 "Ei! Apni ke?!"
+#define CAUGHT_LINE2 "Apnar ID card ba ticket ta dekhan to!"
 
 struct Vec2
 {
     float x, y;
 };
 
-// x, y is the bottom-left corner, y grows upward
 struct Rect
 {
     float x, y, w, h;
@@ -56,10 +38,6 @@ struct Color
 {
     float r, g, b, a;
 };
-
-// ============================================================
-// GAME STATES
-// ============================================================
 
 enum GameState
 {
@@ -85,16 +63,12 @@ enum Direction
     DIR_RIGHT
 };
 
-// ============================================================
-// MAP OBJECTS
-// ============================================================
-
 enum BuildingKind
 {
-    HALL,     // big museum hall (blue)
-    OFFICE,   // office building (brown)
-    GALLERY,  // gallery with striped awning
-    BOOTH     // small security desk
+    HALL,
+    OFFICE,
+    GALLERY,
+    BOOTH
 };
 
 enum PathKind
@@ -194,7 +168,6 @@ struct Map
     bool hasGate;
     float gateX0, gateX1;
 
-    // filled by finishMap(): what blocks feet and what blocks sight
     Rect solids[MAX_SOLID];
     int solidCount;
     Rect blockers[MAX_SOLID];
@@ -203,10 +176,6 @@ struct Map
     float circleR[MAX_SOLID];
     int circleCount;
 };
-
-// ============================================================
-// PLAYER
-// ============================================================
 
 #define PLAYER_RADIUS 8.0f
 #define PLAYER_SPEED 115.0f
@@ -226,14 +195,10 @@ struct Player
     bool exhausted;
 };
 
-// ============================================================
-// GUARD
-// ============================================================
-
 #define GUARD_RADIUS 9.0f
 #define MAX_GUARDS 4
 #define MAX_WAYPOINTS 4
-#define MAX_PATH 300
+#define GUARD_PATH_MAX 300
 
 enum GuardState
 {
@@ -251,7 +216,6 @@ struct Waypoint
 
 struct Guard
 {
-    // settings from the level
     Waypoint route[MAX_WAYPOINTS];
     int routeCount;
     float speed;
@@ -264,7 +228,6 @@ struct Guard
     float hearingRadius;
     float forgetTime;
 
-    // live state
     Vec2 pos;
     float angle;
     int state;
@@ -278,17 +241,12 @@ struct Guard
     float moveBlend;
     float clock;
 
-    // A* path
-    Vec2 path[MAX_PATH];
+    Vec2 path[GUARD_PATH_MAX];
     int pathCount;
     int pathIndex;
     Vec2 pathTarget;
     float pathTimer;
 };
-
-// ============================================================
-// LEVEL
-// ============================================================
 
 struct Level
 {
@@ -297,6 +255,7 @@ struct Level
     const char *briefing;
     const char *reward;
     const char *passNames[3];
+    const char *passClues[3];
     int passCount;
     Vec2 spawn;
     Rect goal;
@@ -306,10 +265,6 @@ struct Level
 
 #define LEVEL_COUNT 4
 
-// ============================================================
-// NPCs AND CATS
-// ============================================================
-
 enum NpcKind
 {
     CONSULTANT,
@@ -317,10 +272,12 @@ enum NpcKind
     SELLER,
     POET,
     CURATOR,
-    GAMER
+    GAMER,
+    GUIDE,
+    STUDENT
 };
 
-#define NPC_COUNT 6
+#define NPC_COUNT 8
 #define MAX_LINES 8
 
 struct Npc
@@ -332,6 +289,7 @@ struct Npc
     const char *lines[MAX_LINES];
     int lineCount;
     int visits;
+    bool here;
     char lastTask[300];
 };
 
@@ -346,10 +304,6 @@ struct CatPose
 #define MAX_ROUTE 300
 #define CROWD_COUNT 6
 #define CAT_COUNT 4
-
-// ============================================================
-// SCOREBOARD
-// ============================================================
 
 struct ScoreEntry
 {
@@ -369,10 +323,6 @@ struct LevelResult
     float totalTime;
 };
 
-// ============================================================
-// FONTS
-// ============================================================
-
 enum FontSize
 {
     FONT_SMALL,
@@ -380,10 +330,6 @@ enum FontSize
     FONT_MEDIUM,
     FONT_LARGE
 };
-
-// ============================================================
-// GLOBAL VARIABLES (defined in main.cpp)
-// ============================================================
 
 extern int screen;
 extern int selected;
@@ -409,22 +355,18 @@ extern int catCount;
 extern float catClock[CAT_COUNT];
 extern float catAffection[CAT_COUNT];
 
-// keyboard state (filled by key down / key up callbacks)
 extern bool letterHeld[4];
 extern bool arrowHeld[4];
 extern bool shiftHeld;
 extern bool spaceHeld;
 
-// mouse
 extern int mouseX, mouseY;
 extern bool mouseKnown;
 
-// window / letterbox
 extern int winW, winH;
 extern int vpX, vpY, vpW, vpH;
 extern float pixelsPerUnit;
 
-// gameplay
 extern float levelTime;
 extern float totalTime;
 extern int totalScore;
@@ -463,11 +405,6 @@ extern float dialogueTime;
 extern ScoreEntry scores[11];
 extern int scoreCount;
 
-// ============================================================
-// FUNCTION PROTOTYPES
-// ============================================================
-
-// ---- vector math (drawing.cpp) ----
 Vec2 makeVec(float x, float y);
 Vec2 vadd(Vec2 a, Vec2 b);
 Vec2 vsub(Vec2 a, Vec2 b);
@@ -487,7 +424,6 @@ Rect rectExpand(Rect r, float m);
 Vec2 rectCenter(Rect r);
 float hash01(int a, int b);
 
-// ---- colours (drawing.cpp) ----
 Color hexColor(unsigned int rgb, float a = 1.0f);
 Color mixColor(Color a, Color b, float t);
 Color darker(Color c, float amount);
@@ -496,7 +432,6 @@ Color withAlpha(Color c, float a);
 void setColor(Color c);
 void setHex(unsigned int rgb, float a = 1.0f);
 
-// ---- primitives (drawing.cpp) ----
 void DrawCircle(float cx, float cy, float rx, float ry, int num_segments);
 void circle(float cx, float cy, float r);
 void DrawCircleOutline(float cx, float cy, float rx, float ry, float width);
@@ -514,15 +449,14 @@ void DrawThickLine(float x1, float y1, float x2, float y2, float width);
 void DrawTriangle(float x1, float y1, float x2, float y2, float x3, float y3);
 void DrawQuad(float x1, float y1, float x2, float y2, float x3, float y3, float x4, float y4);
 
-// ---- text (drawing.cpp) ----
 void DrawText(float x, float y, const char *s, int font);
 void DrawTextCentered(float cx, float y, const char *s, int font);
+void DrawTextFit(float cx, float y, const char *s, int font, float maxW);
 float TextWidth(const char *s, int font);
 void DrawStrokeText(float x, float y, float height, const char *s, float width);
 float StrokeTextWidth(const char *s, float height);
 void formatTime(float seconds, char *out);
 
-// ---- collision.cpp ----
 bool circleVsRect(Vec2 c, float r, Rect rect);
 bool overlapsSolid(Vec2 c, float r);
 Vec2 clampToWorld(Vec2 c, float r);
@@ -533,12 +467,10 @@ bool clearPath(Vec2 from, Vec2 to, float radius);
 int findPath(Vec2 from, Vec2 to, float radius, Vec2 out[], int maxOut);
 Vec2 nearestFreeSpot(Vec2 p, float radius);
 
-// ---- level.cpp ----
 void loadLevel(int index);
 void finishMap();
 const char *levelObjective(int index);
 
-// ---- map.cpp (scenery) ----
 void drawGround(float t);
 void drawCanopies(float t);
 void drawCollisionDebug();
@@ -552,9 +484,10 @@ void drawTableBase(int i);
 void drawRailing(int i);
 void drawFlagPole(int i);
 void drawSign(int i);
+Vec2 gardenSpot(Rect f, int k);
+void drawStatue(Vec2 p, int kind, float t);
 void drawGate();
 
-// ---- characters.cpp ----
 enum CharacterStyleId
 {
     STYLE_DETECTIVE,
@@ -570,12 +503,10 @@ void setupNpcs();
 void drawNpc(int i, float x, float y, float t);
 void drawCat(CatPose pose, float t, int index);
 
-// ---- player.cpp ----
 void resetPlayer(Vec2 spawn);
 void updatePlayer(float dt, float ax, float ay, bool sprint);
 void drawPlayer(float crouch);
 
-// ---- guard.cpp ----
 void resetGuard(Guard &g);
 void updateGuard(Guard &g, float dt, Vec2 playerPos, bool playerNoisy);
 void guardHearNoise(Guard &g, Vec2 source, float radius);
@@ -586,7 +517,6 @@ void drawGuardIndicator(Guard &g, float t);
 void drawSpeechBubble(Guard &g);
 void drawGuardRoute(Guard &g);
 
-// ---- gameplay.cpp ----
 void setScreen(int s);
 void startLevel(int index);
 void restartLevel();
@@ -609,7 +539,6 @@ Vec2 routePose(Vec2 route[], int length, float distance, Vec2 *direction);
 float remainingTime();
 void drawWorld(bool showPlayer);
 
-// ---- ui.cpp ----
 void beginButtons();
 int buttonAt(float x, float y);
 void drawMainMenu();
@@ -625,22 +554,25 @@ void drawLevelComplete();
 void drawVictory();
 void drawHud();
 
-// ---- scoreboard.cpp ----
 void loadScores();
 bool recordScore(const char *name, int score, float seconds);
 void cleanName(const char *in, char *out);
 
-// ---- sound.cpp ----
 enum SoundCue
 {
     SOUND_PICKUP,
     SOUND_COMPLETE,
     SOUND_DISTRACTION,
     SOUND_PET,
-    SOUND_ALERT,
-    SOUND_CAUGHT
+    SOUND_ALERT
 };
 void playSound(int cue);
 void stopSound();
+void startMusic();
+void stopMusic();
+void toggleMusic();
+void pauseMusic(bool paused);
+void setChaseMusic(bool chase);
+void setMenuMusic(bool menu);
 
 #endif

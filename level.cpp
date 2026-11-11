@@ -1,90 +1,142 @@
-// ============================================================
-// level.cpp
-// The four museum levels: buildings, paths, trees, guards,
-// evidence stands, spawn point and exit.
-// ============================================================
-
 #include "game.h"
 
-// ============================================================
-// HELPERS TO FILL THE MAP
-// ============================================================
+#define BORDER_WALL 14.0f
+#define GATE_LEFT 80
+#define GATE_RIGHT 200
 
-Rect makeRect(float x, float y, float w, float h)
+static Rect makeRect(float x, float y, float w, float h)
 {
     Rect r = {x, y, w, h};
     return r;
 }
 
-void addPath(float x, float y, float w, float h, int kind)
+static void addEvidence(const char *name, float x, float y, const char *clue)
+{
+    int slot = level.passCount;
+    level.passNames[slot] = name;
+    level.passClues[slot] = clue;
+    level.checkpoints[slot] = makeVec(x, y);
+    level.passCount++;
+}
+
+static Rect doorGoal(float doorX, float buildingY)
+{
+    return makeRect(doorX - 20, buildingY - 14, 40, 14);
+}
+
+static void addPath(float x, float y, float w, float h, int kind)
 {
     map.paths[map.pathCount].r = makeRect(x, y, w, h);
     map.paths[map.pathCount].kind = kind;
     map.pathCount++;
 }
 
-void addCrossing(float x, float y, float w, float h)
+static void addCrossing(float x, float y, float w, float h)
 {
-    map.crossings[map.crossingCount++] = makeRect(x, y, w, h);
+    map.crossings[map.crossingCount] = makeRect(x, y, w, h);
+    map.crossingCount++;
 }
 
-void addBuilding(float x, float y, float w, float h, int kind, const char *name, float doorX)
+static void addBuilding(float x, float y, float w, float h, int kind, const char *name, float doorX)
 {
-    Building &b = map.buildings[map.buildingCount++];
+    Building &b = map.buildings[map.buildingCount];
     b.r = makeRect(x, y, w, h);
     b.kind = kind;
     b.name = name;
     b.doorX = doorX;
+    map.buildingCount++;
 }
 
-void addWall(float x, float y, float w, float h)
+static void addWall(float x, float y, float w, float h)
 {
-    map.walls[map.wallCount++] = makeRect(x, y, w, h);
+    map.walls[map.wallCount] = makeRect(x, y, w, h);
+    map.wallCount++;
 }
 
-void addTree(float x, float y, float radius, int kind)
+static void addLake(float x, float y, float w, float h)
 {
-    Tree &t = map.trees[map.treeCount++];
+    map.lakes[map.lakeCount] = makeRect(x, y, w, h);
+    map.lakeCount++;
+}
+
+static void addGarden(float x, float y, float w, float h)
+{
+    map.fields[map.fieldCount] = makeRect(x, y, w, h);
+    map.fieldCount++;
+}
+
+static void addSign(float x, float y, float w, float h)
+{
+    map.signs[map.signCount] = makeRect(x, y, w, h);
+    map.signCount++;
+}
+
+static void addFlag(float x, float y)
+{
+    map.flags[map.flagCount] = makeVec(x, y);
+    map.flagCount++;
+}
+
+static void addTable(float x, float y, int colorIndex)
+{
+    map.tables[map.tableCount].p = makeVec(x, y);
+    map.tables[map.tableCount].colorIndex = colorIndex;
+    map.tableCount++;
+}
+
+static void addRailing(float x1, float y1, float x2, float y2)
+{
+    map.railings[map.railingCount].a = makeVec(x1, y1);
+    map.railings[map.railingCount].b = makeVec(x2, y2);
+    map.railingCount++;
+}
+
+static void addTree(float x, float y, float radius, int kind)
+{
+    Tree &t = map.trees[map.treeCount];
     t.p = makeVec(x, y);
     t.radius = radius;
     t.kind = kind;
+    map.treeCount++;
 }
 
-void addBush(float x, float y, float radius)
+static void addBush(float x, float y, float radius)
 {
     map.bushes[map.bushCount].p = makeVec(x, y);
     map.bushes[map.bushCount].radius = radius;
     map.bushCount++;
 }
 
-void addFlowerBed(float x, float y, float w, float h)
+static void addFlowerBed(float x, float y, float w, float h)
 {
-    map.flowerBeds[map.flowerBedCount++] = makeRect(x, y, w, h);
+    map.flowerBeds[map.flowerBedCount] = makeRect(x, y, w, h);
+    map.flowerBedCount++;
 }
 
-void addBench(float x, float y, bool vertical)
+static void addBench(float x, float y, bool vertical)
 {
     map.benches[map.benchCount].p = makeVec(x, y);
     map.benches[map.benchCount].vertical = vertical;
     map.benchCount++;
 }
 
-void addLamp(float x, float y)
+static void addLamp(float x, float y)
 {
-    map.lamps[map.lampCount++] = makeVec(x, y);
+    map.lamps[map.lampCount] = makeVec(x, y);
+    map.lampCount++;
 }
 
-// The outer wall around the museum grounds (optionally with a gate)
-void addBoundary(bool hasGate)
+static void addBoundary(bool hasGate)
 {
-    float t = 14.0f;
+    float t = BORDER_WALL;
     map.hasGate = hasGate;
     if (hasGate)
     {
-        map.gateX0 = 80;
-        map.gateX1 = 200;
+        map.gateX0 = GATE_LEFT;
+        map.gateX1 = GATE_RIGHT;
+        float rightWallX = map.gateX1 + 16;
         addWall(0, 0, map.gateX0 - 16, t);
-        addWall(map.gateX1 + 16, 0, WORLD_W - (map.gateX1 + 16), t);
+        addWall(rightWallX, 0, WORLD_W - rightWallX, t);
     }
     else
     {
@@ -95,16 +147,10 @@ void addBoundary(bool hasGate)
     addWall(WORLD_W - t, t, t, WORLD_H - 2 * t);
 }
 
-// The gold exit sits just below a building's front door
-Rect doorGoal(float doorX, float buildingY)
+static Guard &addGuard(float x1, float y1, float x2, float y2, float wait, float speed, float startAngle)
 {
-    return makeRect(doorX - 20, buildingY - 14, 40, 14);
-}
-
-// A guard walking between waypoints (waiting 'wait' seconds at each)
-Guard &addGuard(float x1, float y1, float x2, float y2, float wait, float speed, float startAngle)
-{
-    Guard &g = guards[guardCount++];
+    Guard &g = guards[guardCount];
+    guardCount++;
     g.routeCount = 2;
     g.route[0].p = makeVec(x1, y1);
     g.route[0].searchTime = wait;
@@ -122,28 +168,40 @@ Guard &addGuard(float x1, float y1, float x2, float y2, float wait, float speed,
     return g;
 }
 
-// ============================================================
-// SOLIDS AND SIGHT BLOCKERS
-// ============================================================
-// Lakes stop your feet but not the guards' eyes.
-// Buildings, walls and the stone sign stop both.
+static void addRoutePoint(Guard &g, float x, float y, float wait)
+{
+    g.route[g.routeCount].p = makeVec(x, y);
+    g.route[g.routeCount].searchTime = wait;
+    g.routeCount++;
+}
 
-void addSolid(Rect r) { map.solids[map.solidCount++] = r; }
-void addBlocker(Rect r) { map.blockers[map.blockerCount++] = r; }
+static void setGuardSight(Guard &g, float fov, float range)
+{
+    g.fov = fov;
+    g.range = range;
+}
 
-void addSolidCircle(Vec2 p, float r)
+static void addSolid(Rect r)
+{
+    map.solids[map.solidCount] = r;
+    map.solidCount++;
+}
+
+static void addBlocker(Rect r)
+{
+    map.blockers[map.blockerCount] = r;
+    map.blockerCount++;
+}
+
+static void addSolidCircle(Vec2 p, float r)
 {
     map.circlePos[map.circleCount] = p;
     map.circleR[map.circleCount] = r;
     map.circleCount++;
 }
 
-void finishMap()
+static void addBoxSolids()
 {
-    map.solidCount = 0;
-    map.blockerCount = 0;
-    map.circleCount = 0;
-
     for (int i = 0; i < map.lakeCount; i++)
         addSolid(map.lakes[i]);
     for (int i = 0; i < map.buildingCount; i++)
@@ -158,7 +216,7 @@ void finishMap()
     }
     if (map.hasGate)
     {
-        addSolid(makeRect(map.gateX0 - 17, 0, 18, 20)); // gate pillars
+        addSolid(makeRect(map.gateX0 - 17, 0, 18, 20));
         addSolid(makeRect(map.gateX1 - 1, 0, 18, 20));
     }
     for (int i = 0; i < map.signCount; i++)
@@ -166,6 +224,10 @@ void finishMap()
         addSolid(rectExpand(map.signs[i], 4));
         addBlocker(map.signs[i]);
     }
+}
+
+static void addBenchSolids()
+{
     for (int i = 0; i < map.benchCount; i++)
     {
         Vec2 p = map.benches[i].p;
@@ -174,12 +236,26 @@ void finishMap()
         else
             addSolid(makeRect(p.x - 18, p.y - 7, 36, 14));
     }
+}
+
+static void addRailingSolids()
+{
     for (int i = 0; i < map.railingCount; i++)
     {
-        Railing rl = map.railings[i];
-        addSolid(makeRect(minf(rl.a.x, rl.b.x) - 1, minf(rl.a.y, rl.b.y) - 1,
-                          fabsf(rl.b.x - rl.a.x) + 2, fabsf(rl.b.y - rl.a.y) + 4));
+        Vec2 a = map.railings[i].a;
+        Vec2 b = map.railings[i].b;
+        float left = minf(a.x, b.x) - 1;
+        float bottom = minf(a.y, b.y) - 1;
+        float width = fabsf(b.x - a.x) + 2;
+        float height = fabsf(b.y - a.y) + 4;
+        addSolid(makeRect(left, bottom, width, height));
     }
+}
+
+static void addRoundSolids()
+{
+    for (int i = 0; i < map.bushCount; i++)
+        addSolidCircle(map.bushes[i].p, map.bushes[i].radius * 0.8f);
     for (int i = 0; i < map.treeCount; i++)
         addSolidCircle(map.trees[i].p, 7);
     for (int i = 0; i < map.lampCount; i++)
@@ -190,28 +266,46 @@ void finishMap()
         addSolidCircle(map.tables[i].p, 12);
 }
 
-// ============================================================
-// LEVEL 1 - MUSEUM ENTRANCE
-// ============================================================
+static void addStatueSolids()
+{
+    for (int i = 0; i < map.fieldCount; i++)
+    {
+        for (int statue = 0; statue < 4; statue++)
+            addSolidCircle(gardenSpot(map.fields[i], statue), 11);
+        addSolidCircle(gardenSpot(map.fields[i], 4), 24);
+    }
+}
 
-void loadLevel1()
+void finishMap()
+{
+    map.solidCount = 0;
+    map.blockerCount = 0;
+    map.circleCount = 0;
+
+    addBoxSolids();
+    addBenchSolids();
+    addRailingSolids();
+    for (int i = 0; i < map.flowerBedCount; i++)
+        addSolid(rectExpand(map.flowerBeds[i], 2));
+    addRoundSolids();
+    addStatueSolids();
+}
+
+static void loadLevel1()
 {
     level.name = "Level 1 - Museum Entrance";
-    level.objective = "Collect the entrance security log";
-    level.briefing = "A priceless artifact vanished last night. Sneak into the museum and gather the security log from the entrance desk.";
-    level.reward = "ENTRANCE LOG SECURED";
-    level.passNames[0] = "Security Log";
-    level.passNames[1] = "Guard Roster";
-    level.passCount = 2;
+    level.objective = "Find out how your badge got here";
+    level.briefing = "The Shapla Crown was stolen last night, and YOUR detective badge was found next to the empty case. Every guard thinks you are the thief. Sneak in and check the entrance records.";
+    level.reward = "SOMEONE STOLE YOUR BADGE";
     level.timeLimit = 90;
     level.spawn = makeVec(140, 35);
     level.goal = doorGoal(230, 350);
-    level.checkpoints[0] = makeVec(230, 150);
-    level.checkpoints[1] = makeVec(560, 250);
+
+    addEvidence("Badge Log", 230, 150, "Your badge was taken from the lost-and-found desk at 5 pm, the day before the theft.");
+    addEvidence("CCTV Photo", 560, 250, "Camera 3: a hand in a guard's glove picks up your badge.");
 
     addBoundary(true);
 
-    // roads and walkways
     addPath(95, 0, 90, 130, ROAD);
     addPath(205, 120, 50, 235, PAVEMENT);
     addPath(50, 120, 160, 40, PAVEMENT);
@@ -219,14 +313,11 @@ void loadLevel1()
     addPath(500, 210, 240, 100, PAVEMENT);
     addCrossing(205, 120, 50, 40);
 
-    // buildings
     addBuilding(50, 350, 340, 115, OFFICE, "CURATOR'S OFFICE", 230);
-    addBuilding(14, 20, 48, 44, BOOTH, "SECURITY DESK", 38);
+    addBuilding(14, 20, 48, 44, BOOTH, "SECURITY", 38);
 
-    // pond
-    map.lakes[map.lakeCount++] = makeRect(480, 80, 240, 130);
+    addLake(480, 80, 240, 130);
 
-    // cover walls
     addWall(330, 180, 70, 14);
     addWall(500, 225, 14, 65);
 
@@ -245,13 +336,9 @@ void loadLevel1()
     addLamp(265, 160);
     addLamp(265, 290);
 
-    // one slow guard with short sight: the tutorial level
     Guard &g = addGuard(410, 240, 235, 260, 2, 50, 90);
-    g.routeCount = 3;
-    g.route[2].p = makeVec(380, 212);
-    g.route[2].searchTime = 2;
-    g.range = 160;
-    g.fov = 65;
+    addRoutePoint(g, 380, 212, 2);
+    setGuardSight(g, 65, 160);
     g.searchSweep = 45;
     g.detectionTimeScale = 2.4f;
     g.chaseSpeed = 125;
@@ -259,24 +346,18 @@ void loadLevel1()
     g.forgetTime = 5;
 }
 
-// ============================================================
-// LEVEL 2 - ANCIENT ARTIFACTS WING
-// ============================================================
-
-void loadLevel2()
+static void loadLevel2()
 {
     level.name = "Level 2 - Ancient Artifacts Wing";
-    level.objective = "Locate the artifact registry";
-    level.briefing = "The security office confirmed your access. Now find the artifact registry before the night patrol rounds the corner.";
-    level.reward = "ARTIFACT REGISTRY LOCATED";
-    level.passNames[0] = "Case File";
-    level.passNames[1] = "Evidence Tag";
-    level.passCount = 2;
-    level.timeLimit = 85;
+    level.objective = "Prove you weren't here at 2:13 am";
+    level.briefing = "The door records say your badge opened the crown room at 2:13 am. You were home asleep. Find out who was really in the Artifacts Wing that night.";
+    level.reward = "YOU WEREN'T HERE AT 2:13";
+    level.timeLimit = 110;
     level.spawn = makeVec(230, 335);
     level.goal = doorGoal(720, 350);
-    level.checkpoints[0] = makeVec(445, 180);
-    level.checkpoints[1] = makeVec(725, 140);
+
+    addEvidence("Door Record", 445, 180, "Your badge opened the crown room at 2:13 am. Your phone shows you were home.");
+    addEvidence("Alarm Panel", 725, 140, "The alarm was switched off at 2:10 am with a MASTER KEY. Badges can't do that.");
 
     addBoundary(false);
 
@@ -308,55 +389,41 @@ void loadLevel2()
     addLamp(690, 150);
     addLamp(760, 150);
 
-    // turns at y = 190, so he can't see the arrival point
-    Guard &g1 = addGuard(445, 120, 445, 190, 2, 55, 90);
-    g1.fov = 65;
-    Guard &g2 = addGuard(880, 260, 725, 260, 2, 65, 0);
-    g2.fov = 65;
+    Guard &g1 = addGuard(300, 95, 600, 95, 2, 50, 0);
+    setGuardSight(g1, 60, 190);
+    Guard &g2 = addGuard(880, 240, 880, 110, 2, 55, 270);
+    setGuardSight(g2, 60, 170);
 }
 
-// ============================================================
-// LEVEL 3 - PAINTINGS GALLERY
-// ============================================================
-
-void loadLevel3()
+static void loadLevel3()
 {
     level.name = "Level 3 - Paintings Gallery";
-    level.objective = "Retrieve the curator's statement";
-    level.briefing = "The night curator holds a signed witness statement. Find her in the gallery, but watch for the roaming guards.";
-    level.reward = "CURATOR'S STATEMENT ACQUIRED";
-    level.passNames[0] = "Curator Note";
-    level.passNames[1] = "Witness Log";
-    level.passNames[2] = "Gallery Key";
-    level.passCount = 3;
-    level.timeLimit = 100;
+    level.objective = "Find who has a master key";
+    level.briefing = "Someone with a master key turned off the alarm. A witness saw the thief cross the gallery. Collect the statements, and stay out of sight: the guards still think it was you.";
+    level.reward = "THE THIEF WORE GUARD BOOTS";
+    level.timeLimit = 125;
     level.spawn = makeVec(720, 335);
     level.goal = doorGoal(250, 350);
-    level.checkpoints[0] = makeVec(120, 240);
-    level.checkpoints[1] = makeVec(420, 120);
-    level.checkpoints[2] = makeVec(310, 210);
+
+    addEvidence("Witness Note", 120, 240, "Arpita, watching reels at 2 am, saw someone in a detective coat and heavy guard boots.");
+    addEvidence("Coat Receipt", 650, 212, "A detective coat was bought yesterday. Size: guard uniform XL.");
+    addEvidence("Key List", 310, 210, "Only two master keys exist: one in the vault, one with the chief guard.");
 
     addBoundary(false);
 
     addBuilding(60, 350, 380, 115, GALLERY, "PAINTINGS GALLERY", 250);
     addBuilding(550, 350, 390, 115, OFFICE, "CURATOR'S OFFICE", 720);
 
-    // sports lawn and cafe tables
-    map.fields[map.fieldCount++] = makeRect(460, 60, 380, 180);
-    map.tables[0].p = makeVec(260, 210);
-    map.tables[0].colorIndex = 0;
-    map.tables[1].p = makeVec(370, 200);
-    map.tables[1].colorIndex = 1;
-    map.tableCount = 2;
+    addGarden(460, 60, 380, 180);
+    addTable(260, 210, 0);
+    addTable(370, 200, 1);
 
     addPath(60, 290, 400, 50, PAVEMENT);
     addPath(60, 60, 380, 50, PAVEMENT);
     addPath(410, 60, 45, 280, PAVEMENT);
     addPath(455, 290, 480, 50, PAVEMENT);
 
-    map.railings[0].a = makeVec(450, 60);
-    map.railings[0].b = makeVec(450, 240);
-    map.railingCount = 1;
+    addRailing(450, 60, 450, 240);
     addWall(360, 260, 14, 75);
     addWall(220, 140, 80, 14);
     addBench(400, 270, false);
@@ -370,33 +437,26 @@ void loadLevel3()
     addTree(880, 270, 24, MANGO_TREE);
 
     Guard &g1 = addGuard(120, 270, 250, 270, 2, 50, 180);
-    g1.fov = 65;
-    Guard &g2 = addGuard(220, 90, 400, 90, 1.5f, 75, 0);
-    g2.fov = 65;
-    Guard &g3 = addGuard(390, 250, 520, 160, 2, 60, 270);
-    g3.fov = 65;
+    setGuardSight(g1, 60, 180);
+    Guard &g2 = addGuard(220, 85, 380, 85, 2, 55, 0);
+    setGuardSight(g2, 60, 180);
+    Guard &g3 = addGuard(590, 95, 710, 95, 2, 50, 0);
+    setGuardSight(g3, 60, 180);
 }
 
-// ============================================================
-// LEVEL 4 - THE MAIN VAULT
-// ============================================================
-
-void loadLevel4()
+static void loadLevel4()
 {
     level.name = "Level 4 - The Main Vault";
-    level.objective = "Recover the stolen ledger";
-    level.briefing = "Final step: the theft ledger is in the vault. Grab it and exit before the chief guard completes his sweep.";
-    level.reward = "CASE FILE COMPLETE";
-    level.passNames[0] = "Vault Log";
-    level.passNames[1] = "Shift Roster";
-    level.passNames[2] = "Evidence Ledger";
-    level.passCount = 3;
-    level.timeLimit = 110;
+    level.objective = "Catch the real thief";
+    level.briefing = "Every clue points to the chief guard. Get into the vault, find proof and the crown itself, and get out before he finishes his sweep.";
+    level.reward = "NAME CLEARED!";
+    level.timeLimit = 130;
     level.spawn = makeVec(250, 325);
     level.goal = doorGoal(680, 345);
-    level.checkpoints[0] = makeVec(180, 200);
-    level.checkpoints[1] = makeVec(520, 250);
-    level.checkpoints[2] = makeVec(820, 180);
+
+    addEvidence("Vault Log", 180, 200, "The vault's master key never left. So the chief guard's key was used.");
+    addEvidence("Sale Ledger", 520, 250, "Crown sold to a buyer abroad. Payment goes to... the chief guard.");
+    addEvidence("Shapla Crown", 730, 215, "Found it! The real crown, hidden in the chief guard's mop bucket.");
 
     addBoundary(false);
 
@@ -407,8 +467,8 @@ void loadLevel4()
     addPath(60, 90, 300, 45, PAVEMENT);
     addPath(160, 135, 45, 205, PAVEMENT);
 
-    map.signs[map.signCount++] = makeRect(200, 24, 230, 62);
-    map.flags[map.flagCount++] = makeVec(160, 240);
+    addSign(200, 24, 230, 62);
+    addFlag(160, 240);
     addFlowerBed(400, 315, 160, 20);
     addFlowerBed(720, 315, 160, 20);
 
@@ -429,15 +489,13 @@ void loadLevel4()
     addLamp(600, 280);
     addLamp(760, 280);
 
-    addGuard(820, 120, 480, 120, 2, 75, 180);
-    addGuard(850, 160, 850, 280, 2, 60, 90);
-    addGuard(650, 280, 520, 280, 2, 55, 180);
-    addGuard(780, 240, 690, 240, 1.5f, 70, 180);
+    Guard &g1 = addGuard(820, 120, 480, 120, 2, 55, 180);
+    setGuardSight(g1, 60, 190);
+    Guard &g2 = addGuard(850, 160, 850, 280, 2, 50, 90);
+    setGuardSight(g2, 60, 170);
+    Guard &g3 = addGuard(640, 275, 520, 275, 2.5f, 45, 180);
+    setGuardSight(g3, 60, 160);
 }
-
-// ============================================================
-// LOAD LEVEL
-// ============================================================
 
 void loadLevel(int index)
 {
@@ -460,14 +518,14 @@ void loadLevel(int index)
         resetGuard(guards[i]);
 }
 
-// Shown on the "level complete" screen as the next task
 const char *levelObjective(int index)
 {
     const char *objectives[LEVEL_COUNT] = {
-        "Collect the entrance security log",
-        "Locate the artifact registry",
-        "Retrieve the curator's statement",
-        "Recover the stolen ledger"};
+        "Find out how your badge got here",
+        "Prove you weren't here at 2:13 am",
+        "Find who has a master key",
+        "Catch the real thief"};
+
     if (index < 0 || index >= LEVEL_COUNT)
         return "";
     return objectives[index];

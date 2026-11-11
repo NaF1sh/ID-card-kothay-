@@ -1,19 +1,4 @@
-// ============================================================
-// MUSEUM DETECTIVE CASE
-// main.cpp : global variables, init(), display(), keyboard,
-//            mouse, reshape and the timer. Program starts here.
-//
-// Controls: WASD / arrows move, Shift or Space sprint,
-//           F collect / talk / pet, mouse click or E throw a
-//           distraction, J case file, P pause, R retry,
-//           G debug view, Esc menu.
-// ============================================================
-
 #include "game.h"
-
-// ============================================================
-// GLOBAL VARIABLES
-// ============================================================
 
 int screen = MAIN_MENU;
 int selected = 0;
@@ -39,16 +24,21 @@ int catCount = 0;
 float catClock[CAT_COUNT];
 float catAffection[CAT_COUNT];
 
-bool letterHeld[4]; // W S A D
-bool arrowHeld[4];  // up down left right
+bool letterHeld[4];
+bool arrowHeld[4];
 bool shiftHeld = false;
 bool spaceHeld = false;
 
-int mouseX = 0, mouseY = 0;
+int mouseX = 0;
+int mouseY = 0;
 bool mouseKnown = false;
 
-int winW = 1000, winH = 600;
-int vpX = 0, vpY = 0, vpW = 1000, vpH = 600;
+int winW = 1000;
+int winH = 600;
+int vpX = 0;
+int vpY = 0;
+int vpW = 1000;
+int vpH = 600;
 float pixelsPerUnit = 1;
 
 float levelTime = 0;
@@ -89,18 +79,24 @@ float dialogueTime = 0;
 ScoreEntry scores[11];
 int scoreCount = 0;
 
-int lastTime = 0;    // ms, for the timer
-float timeLeftOver = 0; // fixed-step accumulator
+int lastTime = 0;
+float timeLeftOver = 0;
 
-#define FIXED_DT (1.0f / 120.0f) // the game updates 120 times a second
 
-// ============================================================
-// INIT
-// ============================================================
+#define FIXED_DT (1.0f / 120.0f)
+
+#define KEY_BACKSPACE 8
+#define KEY_ENTER 13
+#define KEY_ESCAPE 27
+
+#define DIR_KEY_UP 0
+#define DIR_KEY_DOWN 1
+#define DIR_KEY_LEFT 2
+#define DIR_KEY_RIGHT 3
 
 void init()
 {
-    glClearColor(0.11f, 0.14f, 0.19f, 1); // dark blue-grey
+    glClearColor(0.11f, 0.14f, 0.19f, 1);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glEnable(GL_LINE_SMOOTH);
@@ -112,36 +108,20 @@ void init()
     glMatrixMode(GL_MODELVIEW);
 
     loadScores();
+    startMusic();
     levelIndex = 0;
-    restartLevel(); // the menu shows level 1 in the background
+    restartLevel();
     setScreen(MAIN_MENU);
 }
 
-// ============================================================
-// DISPLAY
-// ============================================================
-
-void display()
+static bool isMenuScreen()
 {
-    glClear(GL_COLOR_BUFFER_BIT);
-    glLoadIdentity();
+    return screen == MAIN_MENU || screen == NAME_ENTRY ||
+           screen == SCOREBOARD || screen == INSTRUCTIONS;
+}
 
-    bool inMenu = (screen == MAIN_MENU || screen == NAME_ENTRY ||
-                   screen == SCOREBOARD || screen == INSTRUCTIONS);
-
-    // ---- world: (0,0) of the museum sits just above the bottom HUD ----
-    glPushMatrix();
-    glTranslatef(-500, -300 + PLAY_BOTTOM, 0);
-    drawWorld(!inMenu);
-    glPopMatrix();
-
-    // ---- screen: (0,0) bottom-left, (1000,600) top-right ----
-    glPushMatrix();
-    glTranslatef(-500, -300, 0);
-    if (!inMenu && screen != WIN)
-        drawHud();
-
-    beginButtons();
+static void drawCurrentScreen()
+{
     switch (screen)
     {
     case MAIN_MENU:
@@ -178,15 +158,30 @@ void display()
         drawVictory();
         break;
     }
+}
+
+void display()
+{
+    glClear(GL_COLOR_BUFFER_BIT);
+    glLoadIdentity();
+
+    bool inMenu = isMenuScreen();
+
+    glPushMatrix();
+    glTranslatef(-500, -300 + PLAY_BOTTOM, 0);
+    drawWorld(!inMenu);
+    glPopMatrix();
+
+    glPushMatrix();
+    glTranslatef(-500, -300, 0);
+    if (!inMenu && screen != WIN)
+        drawHud();
+    beginButtons();
+    drawCurrentScreen();
     glPopMatrix();
 
     glutSwapBuffers();
 }
-
-// ============================================================
-// RESHAPE: keep the 1000 x 600 picture, add black bars if the
-// window has another shape (letterbox)
-// ============================================================
 
 void reshape(int w, int h)
 {
@@ -202,39 +197,154 @@ void reshape(int w, int h)
     glViewport(vpX, vpY, vpW, vpH);
 }
 
-// ============================================================
-// KEYBOARD
-// ============================================================
-
-int letterToDir(unsigned char key)
+static int letterToDir(unsigned char key)
 {
     if (key == 'w' || key == 'W')
-        return 0;
+        return DIR_KEY_UP;
     if (key == 's' || key == 'S')
-        return 1;
+        return DIR_KEY_DOWN;
     if (key == 'a' || key == 'A')
-        return 2;
+        return DIR_KEY_LEFT;
     if (key == 'd' || key == 'D')
-        return 3;
+        return DIR_KEY_RIGHT;
     return -1;
 }
 
-int arrowToDir(int key)
+static int arrowToDir(int key)
 {
     if (key == GLUT_KEY_UP)
-        return 0;
+        return DIR_KEY_UP;
     if (key == GLUT_KEY_DOWN)
-        return 1;
+        return DIR_KEY_DOWN;
     if (key == GLUT_KEY_LEFT)
-        return 2;
+        return DIR_KEY_LEFT;
     if (key == GLUT_KEY_RIGHT)
-        return 3;
+        return DIR_KEY_RIGHT;
     return -1;
 }
 
-void readShift()
+static void readShift()
 {
     shiftHeld = (glutGetModifiers() & GLUT_ACTIVE_SHIFT) != 0;
+}
+
+static bool isShiftKey(int key)
+{
+    return key == GLUT_KEY_SHIFT_L || key == GLUT_KEY_SHIFT_R;
+}
+
+static bool isNameChar(unsigned char key)
+{
+    if (key >= 'a' && key <= 'z')
+        return true;
+    if (key >= 'A' && key <= 'Z')
+        return true;
+    if (key >= '0' && key <= '9')
+        return true;
+    return key == ' ' || key == '-' || key == '_';
+}
+
+static void selectPrevious()
+{
+    int count = menuItemCount();
+    selected = (selected + count - 1) % count;
+}
+
+static void selectNext()
+{
+    int count = menuItemCount();
+    selected = (selected + 1) % count;
+}
+
+static bool menuIsOpen()
+{
+    return screen != PLAYING && menuItemCount() > 0;
+}
+
+static void typeNameKey(unsigned char key)
+{
+    int length = strlen(nameDraft);
+    if (key == KEY_ESCAPE)
+    {
+        setScreen(MAIN_MENU);
+    }
+    else if (key == KEY_ENTER)
+    {
+        activateItem(selected);
+    }
+    else if (key == KEY_BACKSPACE && length > 0)
+    {
+        nameDraft[length - 1] = '\0';
+    }
+    else if (length < 18 && isNameChar(key))
+    {
+        nameDraft[length] = key;
+        nameDraft[length + 1] = '\0';
+    }
+}
+
+static void dialogueKey(unsigned char key)
+{
+    if (key == KEY_ESCAPE)
+        setScreen(PLAYING);
+    else if (key == 'f' || key == 'F' || key == KEY_ENTER || key == ' ')
+        advanceDialogue();
+}
+
+static void pressEscape()
+{
+    if (screen == MAIN_MENU)
+        quitGame = true;
+    else if (screen == INSTRUCTIONS)
+        setScreen(MAIN_MENU);
+    else if (screen == BRIEFING)
+        setScreen(PLAYING);
+    else
+        goToMenu();
+}
+
+static void togglePause()
+{
+    if (screen == PLAYING)
+        setScreen(PAUSED);
+    else if (screen == PAUSED)
+        setScreen(PLAYING);
+}
+
+static void tryRetry()
+{
+    if (screen == PLAYING || screen == PAUSED || screen == CAUGHT || screen == TIMED_OUT)
+        retryLevel();
+}
+
+static void toggleCaseFile()
+{
+    if (screen == PLAYING)
+        setScreen(BRIEFING);
+    else if (screen == BRIEFING)
+        setScreen(PLAYING);
+}
+
+static void actionKey(unsigned char key)
+{
+    if (key == KEY_ESCAPE)
+        pressEscape();
+    else if (key == 'p' || key == 'P')
+        togglePause();
+    else if (key == 'r' || key == 'R')
+        tryRetry();
+    else if (key == 'e' || key == 'E')
+        throwDistraction();
+    else if ((key == 'f' || key == 'F') && screen == PLAYING)
+        interact();
+    else if (key == 'j' || key == 'J')
+        toggleCaseFile();
+    else if (key == 'g' || key == 'G')
+        showDebug = !showDebug;
+    else if (key == 'm' || key == 'M')
+        toggleMusic();
+    else if (key == ' ')
+        spaceHeld = true;
 }
 
 void my_keyboard(unsigned char key, int x, int y)
@@ -242,105 +352,38 @@ void my_keyboard(unsigned char key, int x, int y)
     (void)x;
     (void)y;
 
-    // ---- typing a name ----
     if (screen == NAME_ENTRY)
     {
-        int len = strlen(nameDraft);
-        if (key == 27)
-            setScreen(MAIN_MENU);
-        else if (key == 13)
-            activateItem(selected);
-        else if (key == 8 && len > 0)
-            nameDraft[len - 1] = '\0';
-        else if (len < 18 && ((key >= 'a' && key <= 'z') || (key >= 'A' && key <= 'Z') ||
-                              (key >= '0' && key <= '9') || key == ' ' || key == '-' || key == '_'))
-        {
-            nameDraft[len] = key;
-            nameDraft[len + 1] = '\0';
-        }
+        typeNameKey(key);
         return;
     }
-
-    // ---- reading a dialogue ----
     if (screen == DIALOGUE)
     {
-        if (key == 27)
-            setScreen(PLAYING);
-        else if (key == 'f' || key == 'F' || key == 13 || key == ' ')
-            advanceDialogue();
+        dialogueKey(key);
         return;
     }
 
     if (screen == PLAYING)
         readShift();
 
-    int d = letterToDir(key);
-    if (d >= 0)
-        letterHeld[d] = true;
+    int dir = letterToDir(key);
+    if (dir >= 0)
+        letterHeld[dir] = true;
 
-    // ---- menu navigation ----
-    int n = menuItemCount();
-    if (screen != PLAYING && n > 0)
+    if (menuIsOpen())
     {
-        if (d == 0 || d == 2)
-            selected = (selected + n - 1) % n;
-        if (d == 1 || d == 3)
-            selected = (selected + 1) % n;
-        if (key == 13 || key == ' ')
+        if (dir == DIR_KEY_UP || dir == DIR_KEY_LEFT)
+            selectPrevious();
+        if (dir == DIR_KEY_DOWN || dir == DIR_KEY_RIGHT)
+            selectNext();
+        if (key == KEY_ENTER || key == ' ')
         {
             activateItem(selected);
             return;
         }
     }
 
-    switch (key)
-    {
-    case 27: // Esc
-        if (screen == MAIN_MENU)
-            quitGame = true;
-        else if (screen == INSTRUCTIONS)
-            setScreen(MAIN_MENU);
-        else if (screen == BRIEFING)
-            setScreen(PLAYING);
-        else
-            goToMenu();
-        break;
-    case 'p':
-    case 'P':
-        if (screen == PLAYING)
-            setScreen(PAUSED);
-        else if (screen == PAUSED)
-            setScreen(PLAYING);
-        break;
-    case 'r':
-    case 'R':
-        if (screen == PLAYING || screen == PAUSED || screen == CAUGHT || screen == TIMED_OUT)
-            retryLevel();
-        break;
-    case 'e':
-    case 'E':
-        throwDistraction();
-        break;
-    case 'f':
-    case 'F':
-        if (screen == PLAYING)
-            interact();
-        break;
-    case 'j':
-    case 'J':
-        if (screen == PLAYING)
-            setScreen(BRIEFING);
-        else if (screen == BRIEFING)
-            setScreen(PLAYING);
-        break;
-    case 'g':
-    case 'G':
-        showDebug = !showDebug;
-        break;
-    case ' ': // Space = sprint
-        spaceHeld = true;
-        break;
-    }
+    actionKey(key);
 }
 
 void my_keyboard_up(unsigned char key, int x, int y)
@@ -349,9 +392,9 @@ void my_keyboard_up(unsigned char key, int x, int y)
     (void)y;
     if (key == ' ')
         spaceHeld = false;
-    int d = letterToDir(key);
-    if (d >= 0)
-        letterHeld[d] = false;
+    int dir = letterToDir(key);
+    if (dir >= 0)
+        letterHeld[dir] = false;
     readShift();
 }
 
@@ -359,22 +402,21 @@ void spe_key(int key, int x, int y)
 {
     (void)x;
     (void)y;
-    if (key == GLUT_KEY_SHIFT_L || key == GLUT_KEY_SHIFT_R)
+    if (isShiftKey(key))
     {
         shiftHeld = true;
         return;
     }
-    int d = arrowToDir(key);
-    if (d < 0)
+    int dir = arrowToDir(key);
+    if (dir < 0)
         return;
-    arrowHeld[d] = true;
-    int n = menuItemCount();
-    if (screen != PLAYING && n > 0)
+    arrowHeld[dir] = true;
+    if (menuIsOpen())
     {
-        if (d == 0 || d == 2)
-            selected = (selected + n - 1) % n;
+        if (dir == DIR_KEY_UP || dir == DIR_KEY_LEFT)
+            selectPrevious();
         else
-            selected = (selected + 1) % n;
+            selectNext();
     }
 }
 
@@ -382,50 +424,48 @@ void spe_key_up(int key, int x, int y)
 {
     (void)x;
     (void)y;
-    if (key == GLUT_KEY_SHIFT_L || key == GLUT_KEY_SHIFT_R)
+    if (isShiftKey(key))
     {
         shiftHeld = false;
         return;
     }
-    int d = arrowToDir(key);
-    if (d >= 0)
-        arrowHeld[d] = false;
+    int dir = arrowToDir(key);
+    if (dir >= 0)
+        arrowHeld[dir] = false;
 }
 
-// ============================================================
-// MOUSE
-// ============================================================
-
-// window pixels -> view units (0..1000 x 0..600, y up)
-float viewX(int px)
+static float viewX(int px)
 {
     return (px - vpX) / pixelsPerUnit;
 }
 
-float viewY(int py)
+static float viewY(int py)
 {
     return (winH - py - vpY) / pixelsPerUnit;
 }
 
-void my_mouse_move(int x, int y)
+static void rememberMouse(int x, int y)
 {
     mouseX = x;
     mouseY = y;
     mouseKnown = true;
+}
+
+void my_mouse_move(int x, int y)
+{
+    rememberMouse(x, y);
     if (screen == PLAYING)
         return;
-    int i = buttonAt(viewX(x), viewY(y)); // hover selects a button
-    if (i >= 0)
-        selected = i;
+    int button = buttonAt(viewX(x), viewY(y));
+    if (button >= 0)
+        selected = button;
 }
 
 void my_mouse(int button, int state, int x, int y)
 {
     if (button != GLUT_LEFT_BUTTON || state != GLUT_DOWN)
         return;
-    mouseX = x;
-    mouseY = y;
-    mouseKnown = true;
+    rememberMouse(x, y);
     if (screen == PLAYING)
     {
         if (mouseAimValid())
@@ -437,25 +477,21 @@ void my_mouse(int button, int state, int x, int y)
         advanceDialogue();
         return;
     }
-    int i = buttonAt(viewX(x), viewY(y));
-    if (i >= 0)
-        activateItem(i);
+    int clicked = buttonAt(viewX(x), viewY(y));
+    if (clicked >= 0)
+        activateItem(clicked);
 }
-
-// ============================================================
-// TIMER: about 60 frames per second, game logic at 120 Hz
-// ============================================================
 
 void timer(int value)
 {
     (void)value;
     int now = glutGet(GLUT_ELAPSED_TIME);
-    float frame = (now - lastTime) / 1000.0f;
+    float frameSeconds = (now - lastTime) / 1000.0f;
     lastTime = now;
-    if (frame > 0.25f)
-        frame = 0.25f; // after a pause, don't jump far ahead
+    if (frameSeconds > 0.25f)
+        frameSeconds = 0.25f;
 
-    timeLeftOver += frame;
+    timeLeftOver += frameSeconds;
     while (timeLeftOver >= FIXED_DT)
     {
         updateGame(FIXED_DT);
@@ -468,10 +504,6 @@ void timer(int value)
     glutPostRedisplay();
     glutTimerFunc(16, timer, 0);
 }
-
-// ============================================================
-// MAIN
-// ============================================================
 
 int main(int argc, char **argv)
 {
@@ -492,7 +524,7 @@ int main(int argc, char **argv)
     glutMouseFunc(my_mouse);
     glutPassiveMotionFunc(my_mouse_move);
     glutMotionFunc(my_mouse_move);
-    glutIgnoreKeyRepeat(1); // we keep track of held keys ourselves
+    glutIgnoreKeyRepeat(1);
 
     lastTime = glutGet(GLUT_ELAPSED_TIME);
     glutTimerFunc(16, timer, 0);

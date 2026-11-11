@@ -1,9 +1,3 @@
-// ============================================================
-// player.cpp
-// The detective: smooth movement, sprint with stamina,
-// sliding collision, and the walk animation.
-// ============================================================
-
 #include "game.h"
 
 void resetPlayer(Vec2 spawn)
@@ -18,25 +12,42 @@ void resetPlayer(Vec2 spawn)
     player.exhausted = false;
 }
 
-// ax, ay: held direction keys (-1, 0 or 1)
-void updatePlayer(float dt, float ax, float ay, bool sprint)
+static void faceHorizontally(float ax)
 {
-    // ---- facing direction ----
-    if (ax != 0 || ay != 0)
-    {
-        bool horizontalOk = (ax < 0 && player.facing == DIR_LEFT) || (ax > 0 && player.facing == DIR_RIGHT);
-        bool verticalOk = (ay < 0 && player.facing == DIR_DOWN) || (ay > 0 && player.facing == DIR_UP);
-        if (ay == 0 || (ax != 0 && !horizontalOk && !verticalOk))
-            player.facing = ax < 0 ? DIR_LEFT : DIR_RIGHT;
-        else if (ax == 0)
-            player.facing = ay < 0 ? DIR_DOWN : DIR_UP;
-        // diagonal that matches the current facing: keep it (no flicker)
-    }
+    if (ax < 0)
+        player.facing = DIR_LEFT;
+    else
+        player.facing = DIR_RIGHT;
+}
 
-    // ---- sprint and stamina ----
-    bool wantsMove = (ax != 0 || ay != 0);
+static void faceVertically(float ay)
+{
+    if (ay < 0)
+        player.facing = DIR_DOWN;
+    else
+        player.facing = DIR_UP;
+}
+
+static void updateFacing(float ax, float ay)
+{
+    if (ax == 0 && ay == 0)
+        return;
+
+    bool facingMoveX = (ax < 0 && player.facing == DIR_LEFT) || (ax > 0 && player.facing == DIR_RIGHT);
+    bool facingMoveY = (ay < 0 && player.facing == DIR_DOWN) || (ay > 0 && player.facing == DIR_UP);
+    bool alreadyFacingMove = facingMoveX || facingMoveY;
+
+    if (ay == 0 || (ax != 0 && !alreadyFacingMove))
+        faceHorizontally(ax);
+    else if (ax == 0)
+        faceVertically(ay);
+}
+
+static void updateStamina(float dt, bool sprint, bool wantsMove)
+{
     if (player.exhausted && player.stamina > 0.3f)
         player.exhausted = false;
+
     player.sprinting = sprint && wantsMove && !player.exhausted && player.stamina > 0;
     if (player.sprinting)
     {
@@ -44,38 +55,58 @@ void updatePlayer(float dt, float ax, float ay, bool sprint)
         if (player.stamina <= 0)
         {
             player.stamina = 0;
-            player.exhausted = true; // must rest before sprinting again
+            player.exhausted = true;
         }
     }
     else
     {
         player.stamina = minf(1, player.stamina + STAMINA_REGEN * dt);
     }
+}
 
-    // ---- velocity ----
-    // normalising keeps diagonal speed the same as straight speed
+static void updateVelocity(float dt, float ax, float ay, bool wantsMove)
+{
     Vec2 dir = vnormal(makeVec(ax, ay));
-    float speed = PLAYER_SPEED * (player.sprinting ? SPRINT_MULT : 1.0f);
-    Vec2 target = vscale(dir, speed);
-    float k = minf(1, dt * 32);
-    player.vel = vadd(player.vel, vscale(vsub(target, player.vel), k));
+    float speedMultiplier = 1.0f;
+    if (player.sprinting)
+        speedMultiplier = SPRINT_MULT;
+    float speed = PLAYER_SPEED * speedMultiplier;
+    Vec2 targetVel = vscale(dir, speed);
+
+    float smoothing = minf(1, dt * 32);
+    Vec2 change = vscale(vsub(targetVel, player.vel), smoothing);
+    player.vel = vadd(player.vel, change);
     if (!wantsMove)
-        player.vel = makeVec(0, 0); // releasing the keys stops at once
+        player.vel = makeVec(0, 0);
+}
 
-    // ---- move with collision ----
-    Vec2 newPos = moveCircle(player.pos, vscale(player.vel, dt), PLAYER_RADIUS);
-    float actualSpeed = vlength(vsub(newPos, player.pos)) / dt;
-    player.pos = newPos;
+static void updateWalkAnimation(float dt, float actualSpeed)
+{
+    float speedRatio = actualSpeed / PLAYER_SPEED;
+    float targetBlend = 0;
+    if (actualSpeed > 8)
+        targetBlend = minf(1, speedRatio);
 
-    // ---- animation follows the real speed (no walking into walls) ----
-    float targetBlend = actualSpeed > 8 ? minf(1, actualSpeed / PLAYER_SPEED) : 0;
     player.moveBlend += (targetBlend - player.moveBlend) * minf(1, dt * 12);
-    player.walkPhase += dt * 12 * maxf(player.moveBlend, actualSpeed / PLAYER_SPEED);
+    player.walkPhase += dt * 12 * maxf(player.moveBlend, speedRatio);
     if (player.walkPhase > 2 * PI)
         player.walkPhase -= 2 * PI;
 }
 
-// crouch (0..1) squashes the body while petting a cat
+void updatePlayer(float dt, float ax, float ay, bool sprint)
+{
+    bool wantsMove = (ax != 0 || ay != 0);
+    updateFacing(ax, ay);
+    updateStamina(dt, sprint, wantsMove);
+    updateVelocity(dt, ax, ay, wantsMove);
+
+    Vec2 newPos = moveCircle(player.pos, vscale(player.vel, dt), PLAYER_RADIUS);
+    float actualSpeed = vlength(vsub(newPos, player.pos)) / dt;
+    player.pos = newPos;
+
+    updateWalkAnimation(dt, actualSpeed);
+}
+
 void drawPlayer(float crouch)
 {
     float bob = fabsf(sinf(player.walkPhase)) * 1.3f * player.moveBlend;

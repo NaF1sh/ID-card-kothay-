@@ -1,32 +1,20 @@
-// ============================================================
-// gameplay.cpp
-// Game flow (menus -> briefing -> playing -> results),
-// the update of one frame, player actions (collect, talk,
-// pet, throw a distraction) and drawing the whole world.
-// ============================================================
-
 #include "game.h"
 
-// ============================================================
-// SCREEN CHANGES
-// ============================================================
+static float chaseHold = 0;
 
-void setScreen(int s)
+static bool isMenuMusicScreen(int s)
 {
-    // the "caught" voice plays once when we enter that screen
-    if (screen != s)
-    {
-        if (screen == CAUGHT)
-            stopSound();
-        if (s == CAUGHT)
-            playSound(SOUND_CAUGHT);
-    }
-    player.vel = makeVec(0, 0);
-    player.sprinting = false;
-    player.moveBlend = 0;
-    screen = s;
-    selected = 0;
-    screenTime = 0;
+    return s == MAIN_MENU || s == NAME_ENTRY || s == SCOREBOARD ||
+           s == INSTRUCTIONS || s == WIN;
+}
+
+static bool isLevelScreen(int s)
+{
+    return s == PLAYING || s == PAUSED || s == DIALOGUE || s == BRIEFING;
+}
+
+static void releaseAllKeys()
+{
     for (int i = 0; i < 4; i++)
     {
         letterHeld[i] = false;
@@ -36,24 +24,38 @@ void setScreen(int s)
     spaceHeld = false;
 }
 
-// ============================================================
-// WALKERS AND CATS
-// ============================================================
-
-// Builds a route: start point + A* path to the end point.
-// Returns the number of points, or 0 if there is no way through.
-int buildRoute(Vec2 a, Vec2 b, float radius, Vec2 out[])
+void setScreen(int s)
 {
-    Vec2 from = nearestFreeSpot(a, radius);
-    Vec2 to = nearestFreeSpot(b, radius);
-    int n = findPath(from, to, radius, out + 1, MAX_ROUTE - 1);
-    if (n == 0)
-        return 0;
-    out[0] = from;
-    return n + 1;
+    if (screen != s)
+    {
+        setMenuMusic(isMenuMusicScreen(s));
+        if (!isLevelScreen(s))
+        {
+            chaseHold = 0;
+            setChaseMusic(false);
+        }
+    }
+    player.vel = makeVec(0, 0);
+    player.sprinting = false;
+    player.moveBlend = 0;
+    screen = s;
+    selected = 0;
+    screenTime = 0;
+    releaseAllKeys();
 }
 
-void setupCrowdAndCats()
+static int buildRoute(Vec2 start, Vec2 end, float radius, Vec2 out[])
+{
+    Vec2 from = nearestFreeSpot(start, radius);
+    Vec2 to = nearestFreeSpot(end, radius);
+    int pathLength = findPath(from, to, radius, out + 1, MAX_ROUTE - 1);
+    if (pathLength == 0)
+        return 0;
+    out[0] = from;
+    return pathLength + 1;
+}
+
+static void setupCrowd()
 {
     float crowdEnds[CROWD_COUNT][4] = {
         {100, 200, 900, 200},
@@ -62,30 +64,38 @@ void setupCrowdAndCats()
         {300, 100, 700, 100},
         {400, 350, 600, 350},
         {500, 240, 500, 100}};
+
     crowdCount = 0;
     for (int i = 0; i < CROWD_COUNT; i++)
     {
-        int n = buildRoute(makeVec(crowdEnds[i][0], crowdEnds[i][1]),
-                           makeVec(crowdEnds[i][2], crowdEnds[i][3]),
-                           PLAYER_RADIUS, crowdRoute[crowdCount]);
-        if (n > 0)
-            crowdLength[crowdCount++] = n;
+        Vec2 start = makeVec(crowdEnds[i][0], crowdEnds[i][1]);
+        Vec2 end = makeVec(crowdEnds[i][2], crowdEnds[i][3]);
+        int length = buildRoute(start, end, PLAYER_RADIUS, crowdRoute[crowdCount]);
+        if (length > 0)
+        {
+            crowdLength[crowdCount] = length;
+            crowdCount++;
+        }
     }
+}
 
+static void setupCats()
+{
     float catEnds[CAT_COUNT][4] = {
         {150, 300, 350, 310},
         {600, 150, 600, 100},
         {400, 220, 450, 180},
         {750, 300, 800, 280}};
+
     catCount = 0;
     for (int i = 0; i < CAT_COUNT; i++)
     {
-        int n = buildRoute(makeVec(catEnds[i][0], catEnds[i][1]),
-                           makeVec(catEnds[i][2], catEnds[i][3]),
-                           6, catRoute[catCount]);
-        if (n > 0)
+        Vec2 start = makeVec(catEnds[i][0], catEnds[i][1]);
+        Vec2 end = makeVec(catEnds[i][2], catEnds[i][3]);
+        int length = buildRoute(start, end, 6, catRoute[catCount]);
+        if (length > 0)
         {
-            catLength[catCount] = n;
+            catLength[catCount] = length;
             catClock[catCount] = catCount * 2.7f;
             catAffection[catCount] = 0;
             catCount++;
@@ -93,43 +103,52 @@ void setupCrowdAndCats()
     }
 }
 
-// Position along a route that goes there and back again (ping-pong).
-// direction gets the walking direction.
-Vec2 routePose(Vec2 route[], int length, float distance, Vec2 *direction)
+static float routeLength(Vec2 route[], int length)
 {
     float total = 0;
     for (int i = 1; i < length; i++)
         total += vlength(vsub(route[i], route[i - 1]));
+    return total;
+}
+
+Vec2 routePose(Vec2 route[], int length, float distance, Vec2 *direction)
+{
+    float total = routeLength(route, length);
     *direction = makeVec(0, -1);
     if (total < 0.01f)
         return route[0];
 
     distance = fmodf(distance, total * 2);
-    bool reverse = distance > total;
-    if (reverse)
+    bool goingBack = distance > total;
+    if (goingBack)
         distance = total * 2 - distance;
 
     for (int i = 1; i < length; i++)
     {
-        Vec2 d = vsub(route[i], route[i - 1]);
-        float seg = vlength(d);
-        if (seg > 0 && distance <= seg)
+        Vec2 segment = vsub(route[i], route[i - 1]);
+        float segmentLength = vlength(segment);
+        if (segmentLength > 0 && distance <= segmentLength)
         {
-            *direction = reverse ? vscale(d, -1) : d;
-            return vadd(route[i - 1], vscale(d, distance / seg));
+            if (goingBack)
+                *direction = vscale(segment, -1);
+            else
+                *direction = segment;
+            float part = distance / segmentLength;
+            return vadd(route[i - 1], vscale(segment, part));
         }
-        distance -= seg;
+        distance -= segmentLength;
     }
     return route[length - 1];
 }
 
-// Cats walk for 8 seconds, then sit for 4. A happy cat stops
-// and looks at the player while being petted.
 CatPose catPose(int i)
 {
     float clock = catClock[i];
     float phase = fmodf(clock, 12);
-    float distance = (floorf(clock / 12) * 8 + minf(phase, 8)) * 18;
+    float finishedCycles = floorf(clock / 12);
+    float walkTime = finishedCycles * 8 + minf(phase, 8);
+    float distance = walkTime * 18;
+
     CatPose pose;
     pose.position = routePose(catRoute[i], catLength[i], distance, &pose.direction);
     bool petting = catAffection[i] > 1.5f;
@@ -140,17 +159,13 @@ CatPose catPose(int i)
     return pose;
 }
 
-// ============================================================
-// LEVEL START / RESTART
-// ============================================================
-
 void restartLevel()
 {
     loadLevel(levelIndex);
     resetPlayer(level.spawn);
     catcher = -1;
     levelTime = 0;
-    awaitingDeparture = true; // nothing moves until the player does
+    awaitingDeparture = true;
     spotted = false;
     alarmed = false;
     for (int i = 0; i < 3; i++)
@@ -163,9 +178,12 @@ void restartLevel()
     distractionCooldown = 0;
     noiseTime = 0;
     radioCooldown = 0;
+    chaseHold = 0;
+    setChaseMusic(false);
     sprintf(message, "%s. J: view your case file. F: collect evidence.", level.objective);
     messageTime = 5;
-    setupCrowdAndCats();
+    setupCrowd();
+    setupCats();
     setupNpcs();
     setScreen(PLAYING);
 }
@@ -177,7 +195,7 @@ void startLevel(int index)
     if (index > LEVEL_COUNT - 1)
         index = LEVEL_COUNT - 1;
     levelIndex = index;
-    if (levelIndex == 0) // a new run
+    if (levelIndex == 0)
     {
         totalScore = 0;
         totalTime = 0;
@@ -187,7 +205,6 @@ void startLevel(int index)
     setScreen(BRIEFING);
 }
 
-// another attempt at the same level (costs 100 points)
 void retryLevel()
 {
     retries++;
@@ -198,7 +215,7 @@ void retryLevel()
 void goToMenu()
 {
     levelIndex = 0;
-    restartLevel(); // the menu shows level 1 in the background
+    restartLevel();
     setScreen(MAIN_MENU);
 }
 
@@ -209,25 +226,46 @@ float remainingTime()
 
 int collectedCount()
 {
-    int n = 0;
+    int count = 0;
     for (int i = 0; i < level.passCount; i++)
         if (collected[i])
-            n++;
-    return n;
+            count++;
+    return count;
 }
 
-// Score = 1000 for clearing + time bonus + stealth bonus - retries
-void finishLevel()
+static bool allEvidenceCollected()
+{
+    return collectedCount() == level.passCount;
+}
+
+static int stealthBonus()
+{
+    if (!spotted)
+        return 500;
+    if (!alarmed)
+        return 250;
+    return 0;
+}
+
+static void saveFinalScore()
+{
+    if (!rankedRun)
+    {
+        strcpy(scoreStatus, "Practice run - not entered on the scoreboard.");
+        return;
+    }
+    if (recordScore(playerName, totalScore, totalTime))
+        strcpy(scoreStatus, "Run saved. The best 10 runs appear on the scoreboard.");
+    else
+        strcpy(scoreStatus, "Could not save to disk. Scores are kept for this session.");
+}
+
+static void finishLevel()
 {
     playSound(SOUND_COMPLETE);
     result.time = levelTime;
     result.timeBonus = (int)(600 * remainingTime() / level.timeLimit);
-    if (!spotted)
-        result.stealthBonus = 500;
-    else if (!alarmed)
-        result.stealthBonus = 250;
-    else
-        result.stealthBonus = 0;
+    result.stealthBonus = stealthBonus();
     result.retryPenalty = retries * 100;
     result.levelScore = 1000 + result.timeBonus + result.stealthBonus - result.retryPenalty;
     if (result.levelScore < 0)
@@ -240,22 +278,12 @@ void finishLevel()
     bool lastLevel = (levelIndex + 1 == LEVEL_COUNT);
     if (lastLevel)
     {
-        if (rankedRun)
-        {
-            if (recordScore(playerName, totalScore, totalTime))
-                strcpy(scoreStatus, "Run saved. The best 10 runs appear on the scoreboard.");
-            else
-                strcpy(scoreStatus, "Could not save to disk. Scores are kept for this session.");
-        }
-        else
-            strcpy(scoreStatus, "Practice run - not entered on the scoreboard.");
+        saveFinalScore();
+        setScreen(WIN);
     }
-    setScreen(lastLevel ? WIN : LEVEL_COMPLETE);
+    else
+        setScreen(LEVEL_COMPLETE);
 }
-
-// ============================================================
-// MENU ITEMS
-// ============================================================
 
 int menuItemCount()
 {
@@ -313,39 +341,57 @@ const char *menuItem(int i)
     return "";
 }
 
-// What happens when a menu button is chosen
+static void chooseMainMenuItem(int item)
+{
+    if (item == 0)
+    {
+        strcpy(nameDraft, playerName);
+        setScreen(NAME_ENTRY);
+    }
+    else if (item == 1)
+        setScreen(SCOREBOARD);
+    else if (item == 2)
+        setScreen(INSTRUCTIONS);
+    else
+        quitGame = true;
+}
+
+static void chooseNameEntryItem(int item)
+{
+    if (item == 1)
+    {
+        setScreen(MAIN_MENU);
+        return;
+    }
+    char clean[20];
+    cleanName(nameDraft, clean);
+    if (clean[0] == '\0')
+        return;
+    strcpy(playerName, clean);
+    rankedRun = true;
+    scoreStatus[0] = '\0';
+    startLevel(0);
+}
+
+static void choosePauseItem(int item)
+{
+    if (item == 0)
+        setScreen(PLAYING);
+    else if (item == 1)
+        retryLevel();
+    else
+        goToMenu();
+}
+
 void activateItem(int item)
 {
-    char clean[20];
     switch (screen)
     {
     case MAIN_MENU:
-        if (item == 0)
-        {
-            strcpy(nameDraft, playerName);
-            setScreen(NAME_ENTRY);
-        }
-        else if (item == 1)
-            setScreen(SCOREBOARD);
-        else if (item == 2)
-            setScreen(INSTRUCTIONS);
-        else
-            quitGame = true;
+        chooseMainMenuItem(item);
         break;
     case NAME_ENTRY:
-        if (item == 1)
-            setScreen(MAIN_MENU);
-        else
-        {
-            cleanName(nameDraft, clean);
-            if (clean[0] != '\0')
-            {
-                strcpy(playerName, clean);
-                rankedRun = true;
-                scoreStatus[0] = '\0';
-                startLevel(0);
-            }
-        }
+        chooseNameEntryItem(item);
         break;
     case SCOREBOARD:
         goToMenu();
@@ -360,12 +406,7 @@ void activateItem(int item)
         advanceDialogue();
         break;
     case PAUSED:
-        if (item == 0)
-            setScreen(PLAYING);
-        else if (item == 1)
-            retryLevel();
-        else
-            goToMenu();
+        choosePauseItem(item);
         break;
     case CAUGHT:
     case TIMED_OUT:
@@ -389,35 +430,27 @@ void activateItem(int item)
     }
 }
 
-// ============================================================
-// UPDATE (called 120 times per second)
-// ============================================================
-
-void moveAxis(float *ax, float *ay)
+static bool directionHeld(int key)
 {
-    bool up = letterHeld[0] || arrowHeld[0];
-    bool down = letterHeld[1] || arrowHeld[1];
-    bool left = letterHeld[2] || arrowHeld[2];
-    bool right = letterHeld[3] || arrowHeld[3];
-    *ax = (right ? 1.0f : 0.0f) - (left ? 1.0f : 0.0f);
-    *ay = (up ? 1.0f : 0.0f) - (down ? 1.0f : 0.0f);
+    return letterHeld[key] || arrowHeld[key];
 }
 
-void updatePlaying(float dt)
+static void readMoveKeys(float *moveX, float *moveY)
 {
-    worldTime += dt;
-    float ax, ay;
-    moveAxis(&ax, &ay);
-    bool moving = (ax != 0 || ay != 0);
+    *moveX = 0;
+    *moveY = 0;
+    if (directionHeld(3))
+        *moveX += 1;
+    if (directionHeld(2))
+        *moveX -= 1;
+    if (directionHeld(0))
+        *moveY += 1;
+    if (directionHeld(1))
+        *moveY -= 1;
+}
 
-    // patrols and the clock wait until the player starts moving
-    if (awaitingDeparture)
-    {
-        if (!moving)
-            return;
-        awaitingDeparture = false;
-    }
-
+static void countDownTimers(float dt, bool moving)
+{
     levelTime += dt;
     distractionCooldown = maxf(0, distractionCooldown - dt);
     noiseTime = maxf(0, noiseTime - dt);
@@ -427,24 +460,28 @@ void updatePlaying(float dt)
     petTime = maxf(0, petTime - dt);
     alertCueCooldown = maxf(0, alertCueCooldown - dt);
     if (moving)
-        petTime = 0; // moving cancels petting
+        petTime = 0;
+}
 
-    updatePlayer(dt, ax, ay, shiftHeld || spaceHeld);
-
-    // cats walk unless they are being petted
+static void updateCats(float dt)
+{
     for (int i = 0; i < catCount; i++)
     {
-        if (catAffection[i] <= 1.5f)
+        bool beingPetted = catAffection[i] > 1.5f;
+        if (!beingPetted)
             catClock[i] += dt;
         catAffection[i] = maxf(0, catAffection[i] - dt);
     }
+}
 
-    // guards
+static void updateGuards(float dt)
+{
     for (int i = 0; i < guardCount; i++)
     {
         bool wasSeeing = guards[i].seeing;
         updateGuard(guards[i], dt, player.pos, player.sprinting);
-        if (!wasSeeing && guards[i].seeing && alertCueCooldown <= 0)
+        bool startedSeeing = !wasSeeing && guards[i].seeing;
+        if (startedSeeing && alertCueCooldown <= 0)
         {
             playSound(SOUND_ALERT);
             alertCueCooldown = 4;
@@ -455,24 +492,73 @@ void updatePlaying(float dt)
             spotted = true;
         if (guards[i].detection >= 0.6f)
             alarmed = true;
+        if (guards[i].state == ALERT)
+            chaseHold = 3;
     }
+    chaseHold = maxf(0, chaseHold - dt);
+    setChaseMusic(chaseHold > 0);
+}
 
-    // a guard who clearly sees the player radios the others
-    if (radioCooldown <= 0)
+static void radioOtherGuards(int reporter)
+{
+    for (int i = 0; i < guardCount; i++)
     {
-        for (int s = 0; s < guardCount; s++)
+        float distance = vlength(vsub(guards[reporter].pos, guards[i].pos));
+        if (distance < 480)
+            guardReceiveReport(guards[i], player.pos);
+    }
+    radioCooldown = 2.5f;
+    strcpy(message, "Security radio: detective spotted! Break sight and change direction.");
+    messageTime = 2.5f;
+}
+
+static void checkSecurityRadio()
+{
+    if (radioCooldown > 0)
+        return;
+    for (int i = 0; i < guardCount; i++)
+    {
+        if (guards[i].seeing && guards[i].detection >= 0.4f)
         {
-            if (!guards[s].seeing || guards[s].detection < 0.4f)
-                continue;
-            for (int r = 0; r < guardCount; r++)
-                if (vlength(vsub(guards[s].pos, guards[r].pos)) < 480)
-                    guardReceiveReport(guards[r], player.pos);
-            radioCooldown = 2.5f;
-            strcpy(message, "Security radio: detective spotted! Break sight and change direction.");
-            messageTime = 2.5f;
-            break;
+            radioOtherGuards(i);
+            return;
         }
     }
+}
+
+static void checkExit()
+{
+    Rect exitArea = rectExpand(level.goal, PLAYER_RADIUS);
+    if (!rectContains(exitArea, player.pos))
+        return;
+    if (allEvidenceCollected())
+        finishLevel();
+    else
+    {
+        strcpy(message, "Case incomplete. Collect the remaining evidence. J: checklist.");
+        messageTime = 1;
+    }
+}
+
+static void updatePlaying(float dt)
+{
+    worldTime += dt;
+    float moveX, moveY;
+    readMoveKeys(&moveX, &moveY);
+    bool moving = (moveX != 0 || moveY != 0);
+
+    if (awaitingDeparture)
+    {
+        if (!moving)
+            return;
+        awaitingDeparture = false;
+    }
+
+    countDownTimers(dt, moving);
+    updatePlayer(dt, moveX, moveY, shiftHeld || spaceHeld);
+    updateCats(dt);
+    updateGuards(dt);
+    checkSecurityRadio();
 
     if (catcher >= 0)
     {
@@ -484,16 +570,15 @@ void updatePlaying(float dt)
         setScreen(TIMED_OUT);
         return;
     }
-    if (rectContains(rectExpand(level.goal, PLAYER_RADIUS), player.pos))
-    {
-        if (collectedCount() == level.passCount)
-            finishLevel();
-        else
-        {
-            strcpy(message, "Case incomplete. Collect the remaining evidence. J: checklist.");
-            messageTime = 1;
-        }
-    }
+    checkExit();
+}
+
+static void updateMenuBackground(float dt)
+{
+    worldTime += dt;
+    Vec2 nobody = makeVec(-9999, -9999);
+    for (int i = 0; i < guardCount; i++)
+        updateGuard(guards[i], dt, nobody, false);
 }
 
 void updateGame(float dt)
@@ -506,10 +591,7 @@ void updateGame(float dt)
     case NAME_ENTRY:
     case SCOREBOARD:
     case INSTRUCTIONS:
-        // living background: guards keep patrolling (player far away)
-        worldTime += dt;
-        for (int i = 0; i < guardCount; i++)
-            updateGuard(guards[i], dt, makeVec(-9999, -9999), false);
+        updateMenuBackground(dt);
         break;
     case PLAYING:
         updatePlaying(dt);
@@ -518,15 +600,11 @@ void updateGame(float dt)
         dialogueTime += dt;
         break;
     default:
-        break; // paused and result screens freeze the world
+        break;
     }
 }
 
-// ============================================================
-// PLAYER ACTIONS
-// ============================================================
-
-Vec2 facingVector()
+static Vec2 facingVector()
 {
     if (player.facing == DIR_UP)
         return makeVec(0, 1);
@@ -537,17 +615,20 @@ Vec2 facingVector()
     return makeVec(1, 0);
 }
 
-// evidence stand within reach (-1 if none)
 int nearbyPass()
 {
     for (int i = 0; i < level.passCount; i++)
-        if (!collected[i] && vlength(vsub(level.checkpoints[i], player.pos)) < 28 &&
-            lineOfSight(player.pos, level.checkpoints[i]))
+    {
+        if (collected[i])
+            continue;
+        Vec2 stand = level.checkpoints[i];
+        float distance = vlength(vsub(stand, player.pos));
+        if (distance < 28 && lineOfSight(player.pos, stand))
             return i;
+    }
     return -1;
 }
 
-// NPC (0..5) or cat (6..) in front of the player, -1 if none
 int nearbyCharacter()
 {
     Vec2 facing = facingVector();
@@ -555,56 +636,72 @@ int nearbyCharacter()
     float nearest = 65;
     for (int i = 0; i < NPC_COUNT + catCount; i++)
     {
-        Vec2 p = (i < NPC_COUNT) ? npcs[i].position : catPose(i - NPC_COUNT).position;
-        Vec2 d = vsub(p, player.pos);
-        float dist = vlength(d);
-        bool closeEnough = (i < NPC_COUNT) || dist < 38; // cats: must be closer
-        bool inFront = dist < 15 || vdot(vnormal(d), facing) > 0.35f;
-        if (dist < nearest && closeEnough && inFront && lineOfSight(player.pos, p))
+        bool isNpc = i < NPC_COUNT;
+        if (isNpc && !npcs[i].here)
+            continue;
+
+        Vec2 position;
+        if (isNpc)
+            position = npcs[i].position;
+        else
+            position = catPose(i - NPC_COUNT).position;
+
+        Vec2 offset = vsub(position, player.pos);
+        float distance = vlength(offset);
+        bool closeEnough = isNpc || distance < 38;
+        bool inFront = distance < 15 || vdot(vnormal(offset), facing) > 0.35f;
+        if (distance < nearest && closeEnough && inFront && lineOfSight(player.pos, position))
         {
-            nearest = dist;
+            nearest = distance;
             found = i;
         }
     }
     return found;
 }
 
-// mouse position (window pixels) -> view units (0..1000, 0..600)
-Vec2 mouseView()
+static Vec2 mouseView()
 {
-    return makeVec((mouseX - vpX) / pixelsPerUnit, (winH - mouseY - vpY) / pixelsPerUnit);
+    float viewX = (mouseX - vpX) / pixelsPerUnit;
+    float viewY = (winH - mouseY - vpY) / pixelsPerUnit;
+    return makeVec(viewX, viewY);
 }
 
 bool mouseAimValid()
 {
     if (!mouseKnown)
         return false;
-    Vec2 v = mouseView();
-    return v.x >= 0 && v.x < VIEW_W && v.y >= PLAY_BOTTOM && v.y < PLAY_TOP;
+    Vec2 view = mouseView();
+    return view.x >= 0 && view.x < VIEW_W && view.y >= PLAY_BOTTOM && view.y < PLAY_TOP;
 }
 
-// Where the distraction would land: towards the mouse (up to 190),
-// or straight ahead (178) when playing with the keyboard only.
+static Vec2 pointAhead(Vec2 direction, float distance)
+{
+    Vec2 point = vadd(player.pos, vscale(direction, distance));
+    return clampToWorld(point, 12);
+}
+
 Vec2 distractionTarget()
 {
-    Vec2 dir = facingVector();
+    Vec2 direction = facingVector();
     float reach = 178;
     if (mouseAimValid())
     {
-        Vec2 v = mouseView();
-        Vec2 d = vsub(makeVec(v.x, v.y - PLAY_BOTTOM), player.pos);
-        if (vlength(d) < 0.001f)
+        Vec2 view = mouseView();
+        Vec2 mouseWorld = makeVec(view.x, view.y - PLAY_BOTTOM);
+        Vec2 toMouse = vsub(mouseWorld, player.pos);
+        if (vlength(toMouse) < 0.001f)
             return player.pos;
-        dir = vnormal(d);
-        reach = minf(190, vlength(d));
+        direction = vnormal(toMouse);
+        reach = minf(190, vlength(toMouse));
     }
-    // stop in front of walls
-    float dist = maxf(0, minf(reach, raycast(player.pos, dir, reach + 12) - 12));
-    Vec2 target = clampToWorld(vadd(player.pos, vscale(dir, dist)), 12);
-    while (dist > 0 && overlapsSolid(target, GUARD_RADIUS))
+
+    float wallDistance = raycast(player.pos, direction, reach + 12) - 12;
+    float distance = maxf(0, minf(reach, wallDistance));
+    Vec2 target = pointAhead(direction, distance);
+    while (distance > 0 && overlapsSolid(target, GUARD_RADIUS))
     {
-        dist = maxf(0, dist - 10);
-        target = clampToWorld(vadd(player.pos, vscale(dir, dist)), 12);
+        distance = maxf(0, distance - 10);
+        target = pointAhead(direction, distance);
     }
     return target;
 }
@@ -627,31 +724,49 @@ void throwDistraction()
     messageTime = 2.5f;
 }
 
-void talk()
+static void petTheCat(int cat)
 {
-    int who = nearbyCharacter();
-    if (who < 0)
+    const char *catNames[4] = {"Tonmoy", "Shadow", "Mishti", "Professor Meow"};
+    if (catAffection[cat] > 1.5f)
         return;
-    awaitingDeparture = false;
+    catAffection[cat] = 3;
+    petCat = cat;
+    petTime = 0.85f;
+    player.vel = makeVec(0, 0);
+    sprintf(message, "%s leans into your hand. Prrrr...", catNames[cat % 4]);
+    messageTime = 3;
+    playSound(SOUND_PET);
+}
 
-    // ---- cat: pet it ----
-    if (who >= NPC_COUNT)
+static void writeRemainingEvidence(char task[])
+{
+    if (allEvidenceCollected())
     {
-        const char *catNames[4] = {"Biscuit", "Shadow", "Mishti", "Professor Meow"};
-        int cat = who - NPC_COUNT;
-        if (catAffection[cat] > 1.5f)
-            return;
-        catAffection[cat] = 3;
-        petCat = cat;
-        petTime = 0.85f;
-        player.vel = makeVec(0, 0);
-        sprintf(message, "%s leans into your hand. Prrrr...", catNames[cat % 4]);
-        messageTime = 3;
-        playSound(SOUND_PET);
+        strcpy(task, "Shob evidence pawa gese. Ebar gold exit e jao.");
         return;
     }
+    strcpy(task, "Ekhono baki: ");
+    bool first = true;
+    for (int i = 0; i < level.passCount; i++)
+    {
+        if (collected[i])
+            continue;
+        if (!first)
+            strcat(task, " ar ");
+        strcat(task, level.passNames[i]);
+        first = false;
+    }
+    strcat(task, ". Stand er kase giye F chapo.");
+}
 
-    // ---- NPC: talk ----
+static bool isLevelContact(Npc &npc)
+{
+    int contacts[3] = {CONSULTANT, CURATOR, SELLER};
+    return levelIndex < 3 && npc.kind == contacts[levelIndex];
+}
+
+static void talkToNpc(int who)
+{
     Npc &npc = npcs[who];
     dialogueCharacter = who;
     dialogueTime = 0;
@@ -659,36 +774,18 @@ void talk()
     speakerRole = npc.role;
     dialogueText[0] = '\0';
 
-    // this level's contact person tells you what to collect
-    int contacts[3] = {CONSULTANT, CURATOR, SELLER};
-    if (levelIndex < 3 && npc.kind == contacts[levelIndex])
+    if (isLevelContact(npc))
     {
         char task[300];
-        if (collectedCount() == level.passCount)
-            strcpy(task, "You have everything. Take the evidence to the gold exit to close this case.");
-        else
-        {
-            strcpy(task, "I can help with your case file. Find ");
-            bool first = true;
-            for (int i = 0; i < level.passCount; i++)
-            {
-                if (collected[i])
-                    continue;
-                if (!first)
-                    strcat(task, " and ");
-                strcat(task, level.passNames[i]);
-                first = false;
-            }
-            strcat(task, ". Press F at each evidence stand.");
-        }
-        if (strcmp(task, npc.lastTask) != 0) // only when the task changed
+        writeRemainingEvidence(task);
+        bool taskChanged = strcmp(task, npc.lastTask) != 0;
+        if (taskChanged)
         {
             strcpy(dialogueText, task);
             strcpy(npc.lastTask, task);
         }
     }
 
-    // otherwise the next line of their conversation
     if (dialogueText[0] == '\0')
     {
         if (npc.lineCount == 0)
@@ -699,44 +796,51 @@ void talk()
     setScreen(DIALOGUE);
 }
 
-// F key: collect evidence if close, otherwise talk / pet
+static void talk()
+{
+    int who = nearbyCharacter();
+    if (who < 0)
+        return;
+    awaitingDeparture = false;
+
+    if (who >= NPC_COUNT)
+        petTheCat(who - NPC_COUNT);
+    else
+        talkToNpc(who);
+}
+
+static void collectEvidence(int pass)
+{
+    awaitingDeparture = false;
+    collected[pass] = true;
+    pickupPos = level.checkpoints[pass];
+    pickupTime = 1;
+    playSound(SOUND_PICKUP);
+    if (allEvidenceCollected())
+        sprintf(message, "%s: %s  All evidence found - go to the gold exit!", level.passNames[pass], level.passClues[pass]);
+    else
+        sprintf(message, "%s: %s", level.passNames[pass], level.passClues[pass]);
+    messageTime = 7;
+}
+
 void interact()
 {
     int pass = nearbyPass();
     if (pass >= 0)
-    {
-        awaitingDeparture = false;
-        collected[pass] = true;
-        pickupPos = level.checkpoints[pass];
-        pickupTime = 1;
-        playSound(SOUND_PICKUP);
-        if (collectedCount() == level.passCount)
-            sprintf(message, "%s collected. Case file ready! Go to the gold exit.", level.passNames[pass]);
-        else
-            sprintf(message, "%s collected. Check J for the remaining evidence.", level.passNames[pass]);
-        messageTime = 4;
-        return;
-    }
-    talk();
+        collectEvidence(pass);
+    else
+        talk();
 }
 
-// text appears 42 letters per second; first press shows it all
 void advanceDialogue()
 {
-    int len = strlen(dialogueText);
-    if (dialogueTime * 42 < len)
-        dialogueTime = len / 42.0f + 1;
+    int length = strlen(dialogueText);
+    bool stillTyping = dialogueTime * 42 < length;
+    if (stillTyping)
+        dialogueTime = length / 42.0f + 1;
     else
         setScreen(PLAYING);
 }
-
-// ============================================================
-// DRAWING THE WORLD
-// ============================================================
-// Everything that stands up (buildings, trees, people...) is put
-// in a list with the y of its feet. The list is sorted from top
-// (far) to bottom (near), then drawn in that order, so nearer
-// things cover the ones behind them.
 
 enum DepthType
 {
@@ -751,8 +855,8 @@ enum DepthType
     D_BUILDING,
     D_WALL,
     D_GATE,
-    D_BALL,
-    D_PLAYER_FOOTBALL,
+    D_STATUE,
+    D_ART_VISITOR,
     D_CROWD,
     D_NPC,
     D_CAT,
@@ -768,22 +872,20 @@ struct DepthItem
 };
 
 #define MAX_DEPTH 200
-DepthItem depthItems[MAX_DEPTH];
-int depthCount;
+static DepthItem depthItems[MAX_DEPTH];
+static int depthCount;
 
-void addDepth(float y, int type, int index)
+static void addDepth(float y, int type, int index)
 {
-    if (depthCount < MAX_DEPTH)
-    {
-        depthItems[depthCount].y = y;
-        depthItems[depthCount].type = type;
-        depthItems[depthCount].index = index;
-        depthCount++;
-    }
+    if (depthCount >= MAX_DEPTH)
+        return;
+    depthItems[depthCount].y = y;
+    depthItems[depthCount].type = type;
+    depthItems[depthCount].index = index;
+    depthCount++;
 }
 
-// insertion sort: bigger y (further away) first, keeps equal items in order
-void sortDepth()
+static void sortDepth()
 {
     for (int i = 1; i < depthCount; i++)
     {
@@ -798,44 +900,86 @@ void sortDepth()
     }
 }
 
-// football and footballers on the level 3 lawn
-Vec2 ballPos()
+static Vec2 artVisitorPos(int i, Vec2 *dir)
 {
-    Vec2 c = rectCenter(map.fields[0]);
-    return makeVec(c.x + sinf(worldTime * 0.65f) * 115, c.y + cosf(worldTime * 0.9f) * 45);
+    Vec2 center = rectCenter(map.fields[0]);
+    bool clockwise = (i % 2 != 0);
+
+    float angle = worldTime * 0.22f;
+    if (clockwise)
+        angle = -angle;
+    angle += i * PI * 0.5f + (i % 2) * PI * 0.25f;
+
+    float turn = 1;
+    if (clockwise)
+        turn = -1;
+    *dir = makeVec(-sinf(angle) * 102 * turn, cosf(angle) * 55 * turn);
+    return makeVec(center.x + cosf(angle) * 102, center.y + sinf(angle) * 55);
 }
 
-Vec2 footballerPos(int i)
+static Vec2 crowdPos(int i, Vec2 *dir)
 {
-    Vec2 c = rectCenter(map.fields[0]);
-    return makeVec(c.x + sinf(worldTime * 0.65f + i * 0.5f) * 100,
-                   c.y + cosf(worldTime * 0.9f + i * 1.7f) * 55);
+    int speed = 36 + (i % 3) * 7;
+    int startOffset = i * 137;
+    float distance = worldTime * speed + startOffset;
+    return routePose(crowdRoute[i], crowdLength[i], distance, dir);
 }
 
-Vec2 crowdPos(int i, Vec2 *dir)
+static void drawVisitor(Vec2 p, Vec2 dir, unsigned int shirt, bool backpack, float phase, float blend)
 {
-    return routePose(crowdRoute[i], crowdLength[i], worldTime * (36 + (i % 3) * 7) + i * 137, dir);
-}
-
-void drawVisitor(Vec2 p, Vec2 dir, unsigned int shirt, bool backpack, float scale, float phase, float blend)
-{
+    float scale = 0.92f;
+    float angle = radToDeg(atan2f(dir.y, dir.x));
     drawCharacterShadow(p, 0.9f);
     glPushMatrix();
     glTranslatef(p.x, p.y, 0);
     glScalef(scale, scale, 1);
-    useStyle(STYLE_DETECTIVE); // visitors use the same body, other shirts
+    useStyle(STYLE_DETECTIVE);
     setShirt(shirt);
     setBackpack(backpack);
-    drawCharacter(directionFromAngle(radToDeg(atan2f(dir.y, dir.x))), phase, blend);
+    drawCharacter(directionFromAngle(angle), phase, blend);
     glPopMatrix();
 }
 
-void drawDepthItem(DepthItem it)
+static unsigned int visitorShirt(int number)
 {
-    int i = it.index;
     unsigned int shirts[5] = {0xc57462, 0x8b9b68, 0x8b79aa, 0xd3b772, 0x67a5a1};
-    Vec2 p, dir;
-    switch (it.type)
+    return shirts[number % 5];
+}
+
+static void drawArtVisitor(int i)
+{
+    Vec2 dir;
+    Vec2 p = artVisitorPos(i, &dir);
+    drawVisitor(p, dir, visitorShirt(i + 2), i == 1, worldTime * 6 + i, 0.6f);
+}
+
+static void drawCrowdVisitor(int i)
+{
+    Vec2 dir;
+    Vec2 p = crowdPos(i, &dir);
+    drawVisitor(p, dir, visitorShirt(i), i % 2 == 0, worldTime * 7 + i, 0.7f);
+}
+
+static void drawPlayerWithPettingHand()
+{
+    float handWave = 0;
+    if (petTime > 0)
+        handWave = sinf(PI * (1 - petTime / 0.85f));
+    drawPlayer(handWave);
+
+    if (petTime <= 0 || petCat < 0)
+        return;
+    Vec2 cat = catPose(petCat).position;
+    Vec2 hand = makeVec(cat.x, cat.y + 13 + sinf(worldTime * 18) * 1.5f);
+    glColor3ub(201, 139, 98);
+    DrawThickLine(player.pos.x + 6, player.pos.y + 13, hand.x, hand.y, 3);
+    circle(hand.x, hand.y, 2.5f);
+}
+
+static void drawDepthItem(DepthItem item)
+{
+    int i = item.index;
+    switch (item.type)
     {
     case D_BUSH:
         drawBush(i);
@@ -870,23 +1014,14 @@ void drawDepthItem(DepthItem it)
     case D_GATE:
         drawGate();
         break;
-    case D_BALL:
-        p = ballPos();
-        drawCharacterShadow(p, 0.35f);
-        setHex(0xffffff);
-        circle(p.x, p.y + 4, 5);
-        setHex(0x293544);
-        circle(p.x, p.y + 4, 2);
-        circle(p.x - 3, p.y + 6, 1);
-        circle(p.x + 3, p.y + 2, 1);
+    case D_STATUE:
+        drawStatue(gardenSpot(map.fields[0], i), i, worldTime);
         break;
-    case D_PLAYER_FOOTBALL:
-        p = footballerPos(i);
-        drawVisitor(p, vsub(ballPos(), p), (i % 2) ? 0xc74f49 : 0xf0d573, false, 0.95f, worldTime * 11 + i, 0.9f);
+    case D_ART_VISITOR:
+        drawArtVisitor(i);
         break;
     case D_CROWD:
-        p = crowdPos(i, &dir);
-        drawVisitor(p, dir, shirts[i % 5], i % 2 == 0, 0.92f, worldTime * 7 + i, 0.7f);
+        drawCrowdVisitor(i);
         break;
     case D_NPC:
         drawNpc(i, npcs[i].position.x, npcs[i].position.y, worldTime);
@@ -895,16 +1030,7 @@ void drawDepthItem(DepthItem it)
         drawCat(catPose(i), worldTime, i);
         break;
     case D_PLAYER:
-        drawPlayer(petTime > 0 ? sinf(PI * (1 - petTime / 0.85f)) : 0);
-        if (petTime > 0 && petCat >= 0)
-        {
-            // arm reaching down to the cat
-            Vec2 cat = catPose(petCat).position;
-            Vec2 hand = makeVec(cat.x, cat.y + 13 + sinf(worldTime * 18) * 1.5f);
-            setHex(0xc98b62);
-            DrawThickLine(player.pos.x + 6, player.pos.y + 13, hand.x, hand.y, 3);
-            circle(hand.x, hand.y, 2.5f);
-        }
+        drawPlayerWithPettingHand();
         break;
     case D_GUARD:
         drawGuard(guards[i]);
@@ -912,134 +1038,158 @@ void drawDepthItem(DepthItem it)
     }
 }
 
-// Evidence stands, the exit ring and its label
-void drawGoalMarker()
+static void drawNameTag(float x, float y, const char *name, unsigned int boxColor, float alpha, float height, float corner)
 {
-    for (int i = 0; i < level.passCount; i++)
-    {
-        if (collected[i])
-            continue;
-        Vec2 p = level.checkpoints[i];
-        setHex(0x63a9b0, 0.18f);
-        DrawCircle(p.x, p.y, 22, 12, 0);
-        setHex(0xb7ded4);
-        DrawCircleOutline(p.x, p.y, 22, 12, 1.5f);
-        // a paper folder on a low stand
-        setHex(0x766552);
-        DrawRoundRect(p.x - 13, p.y + 2, 26, 16, 2);
-        setHex(0xb69c75);
-        DrawRect(p.x - 12, p.y + 6, 24, 13);
-        setHex(0xfff1cf);
-        DrawRect(p.x - 7, p.y + 9, 14, 14);
-        setHex(0x568c96);
-        DrawRect(p.x - 5, p.y + 18, 10, 2);
-        setHex(0xaaa08a);
-        DrawLine(p.x - 4, p.y + 15, p.x + 4, p.y + 15, 1);
-        DrawLine(p.x - 4, p.y + 12, p.x + 3, p.y + 12, 1);
-        if (vlength(vsub(p, player.pos)) < 140)
-        {
-            float w = TextWidth(level.passNames[i], FONT_SMALL) + 14;
-            setHex(0x26353d, 0.92f);
-            DrawRoundRect(p.x - w / 2, p.y + 31, w, 19, 4);
-            setHex(0xffedc3);
-            DrawTextCentered(p.x, p.y + 37, level.passNames[i], FONT_SMALL);
-        }
-    }
+    float width = TextWidth(name, FONT_SMALL) + 14;
+    setHex(boxColor, alpha);
+    DrawRoundRect(x - width / 2, y, width, height, corner);
+}
 
-    // pulsing gold ring at the exit (scale animation)
-    Vec2 c = rectCenter(level.goal);
+static void drawEvidenceStand(int i)
+{
+    Vec2 p = level.checkpoints[i];
+    setHex(0x63a9b0, 0.18f);
+    DrawCircle(p.x, p.y, 22, 12, 0);
+    glColor3ub(183, 222, 212);
+    DrawCircleOutline(p.x, p.y, 22, 12, 1.5f);
+    glColor3ub(118, 101, 82);
+    DrawRoundRect(p.x - 13, p.y + 2, 26, 16, 2);
+    glColor3ub(182, 156, 117);
+    DrawRect(p.x - 12, p.y + 6, 24, 13);
+    glColor3ub(255, 241, 207);
+    DrawRect(p.x - 7, p.y + 9, 14, 14);
+    glColor3ub(86, 140, 150);
+    DrawRect(p.x - 5, p.y + 18, 10, 2);
+    glColor3ub(170, 160, 138);
+    DrawLine(p.x - 4, p.y + 15, p.x + 4, p.y + 15, 1);
+    DrawLine(p.x - 4, p.y + 12, p.x + 3, p.y + 12, 1);
+
+    if (vlength(vsub(p, player.pos)) < 140)
+    {
+        drawNameTag(p.x, p.y + 31, level.passNames[i], 0x26353d, 0.92f, 19, 4);
+        glColor3ub(255, 237, 195);
+        DrawTextCentered(p.x, p.y + 37, level.passNames[i], FONT_SMALL);
+    }
+}
+
+static void drawExitMarker()
+{
+    Vec2 center = rectCenter(level.goal);
     float pulse = 1 + 0.15f * sinf(worldTime * 3);
     glPushMatrix();
-    glTranslatef(c.x, c.y - 10, 0);
+    glTranslatef(center.x, center.y - 10, 0);
     glScalef(pulse, pulse, 1);
     DrawSoftCircle(0, 0, 30, 16, hexColor(0xffe066, 0.45f), hexColor(0xffe066, 0));
     setHex(0xffd23f, 0.9f);
     DrawCircleOutline(0, 0, 22, 11, 2);
     glPopMatrix();
-    setHex(0xffe5a0);
-    DrawTextCentered(c.x, c.y + 27, collectedCount() == level.passCount ? "EXIT OPEN" : "NEEDS ALL EVIDENCE", FONT_SMALL);
+
+    glColor3ub(255, 229, 160);
+    if (allEvidenceCollected())
+        DrawTextCentered(center.x, center.y + 27, "EXIT OPEN", FONT_SMALL);
+    else
+        DrawTextCentered(center.x, center.y + 27, "NEEDS ALL EVIDENCE", FONT_SMALL);
 }
 
-// Small things drawn over the world while playing
-void drawWorldOverlays()
+static void drawGoalMarker()
 {
-    // name tags of nearby NPCs
+    for (int i = 0; i < level.passCount; i++)
+        if (!collected[i])
+            drawEvidenceStand(i);
+    drawExitMarker();
+}
+
+static void drawNpcNames()
+{
     for (int i = 0; i < NPC_COUNT; i++)
     {
+        if (!npcs[i].here)
+            continue;
         Vec2 p = npcs[i].position;
         if (vlength(vsub(p, player.pos)) >= 170)
             continue;
-        float w = TextWidth(npcs[i].name, FONT_SMALL) + 14;
-        setHex(0x1d2430, 0.9f);
-        DrawRoundRect(p.x - w / 2, p.y + 49, w, 20, 5);
-        setHex(0xffe5a0);
+        drawNameTag(p.x, p.y + 49, npcs[i].name, 0x1d2430, 0.9f, 20, 5);
+        glColor3ub(255, 229, 160);
         DrawTextCentered(p.x, p.y + 55, npcs[i].name, FONT_SMALL);
     }
+}
 
+static void drawSprintRing()
+{
+    float progress = fmodf(worldTime * 2.5f, 1);
+    setHex(0xffffff, 0.35f * (1 - progress));
+    DrawCircleOutline(player.pos.x, player.pos.y, 12 + progress * 30, 6 + progress * 15, 1.5f);
+}
+
+static void drawNoiseRing()
+{
+    setHex(0xffd23f, noiseTime / 2.5f);
+    float radius = 12 + (2.5f - noiseTime) * 42;
+    DrawCircleOutline(noisePos.x, noisePos.y, radius, radius, 2);
+    DrawTextCentered(noisePos.x, noisePos.y + 15, "CLINK!", FONT_SMALL);
+}
+
+static void drawAimCrosshair()
+{
+    Vec2 t = distractionTarget();
+    if (distractionCooldown > 0)
+        setHex(0xb5b9b9, 0.6f);
+    else
+        setHex(0xffe5a0, 0.8f);
+    DrawCircleOutline(t.x, t.y, 8, 8, 1);
+    DrawLine(t.x - 12, t.y, t.x - 5, t.y, 1);
+    DrawLine(t.x + 5, t.y, t.x + 12, t.y, 1);
+    DrawLine(t.x, t.y - 12, t.x, t.y - 5, 1);
+    DrawLine(t.x, t.y + 5, t.x, t.y + 12, 1);
+
+    const char *label = "E";
+    if (distractionCooldown > 0)
+        label = "WAIT";
+    else if (mouseAimValid())
+        label = "CLICK";
+    DrawTextCentered(t.x, t.y + 16, label, FONT_SMALL);
+}
+
+static void drawWorldOverlays()
+{
+    drawNpcNames();
     for (int i = 0; i < guardCount; i++)
         drawGuardIndicator(guards[i], worldTime);
-
-    // footstep rings while sprinting (sprinting is noisy)
     if (player.sprinting)
-    {
-        float k = fmodf(worldTime * 2.5f, 1);
-        setHex(0xffffff, 0.35f * (1 - k));
-        DrawCircleOutline(player.pos.x, player.pos.y, 12 + k * 30, 6 + k * 15, 1.5f);
-    }
-
-    // CLINK ring where the distraction landed
+        drawSprintRing();
     if (noiseTime > 0)
-    {
-        setHex(0xffd23f, noiseTime / 2.5f);
-        float r = 12 + (2.5f - noiseTime) * 42;
-        DrawCircleOutline(noisePos.x, noisePos.y, r, r, 2);
-        DrawTextCentered(noisePos.x, noisePos.y + 15, "CLINK!", FONT_SMALL);
-    }
+        drawNoiseRing();
 
-    // aiming crosshair
-    if (distractions > 0 && screen == PLAYING && (!mouseKnown || mouseAimValid()))
-    {
-        Vec2 t = distractionTarget();
-        if (distractionCooldown > 0)
-            setHex(0xb5b9b9, 0.6f);
-        else
-            setHex(0xffe5a0, 0.8f);
-        DrawCircleOutline(t.x, t.y, 8, 8, 1);
-        DrawLine(t.x - 12, t.y, t.x - 5, t.y, 1);
-        DrawLine(t.x + 5, t.y, t.x + 12, t.y, 1);
-        DrawLine(t.x, t.y - 12, t.x, t.y - 5, 1);
-        DrawLine(t.x, t.y + 5, t.x, t.y + 12, 1);
-        const char *label = distractionCooldown > 0 ? "WAIT" : (mouseAimValid() ? "CLICK" : "E");
-        DrawTextCentered(t.x, t.y + 16, label, FONT_SMALL);
-    }
+    bool canAim = !mouseKnown || mouseAimValid();
+    if (distractions > 0 && screen == PLAYING && canAim)
+        drawAimCrosshair();
 }
 
-void drawPickupSparkle()
+static void drawPickupSparkle()
 {
-    float k = 1 - pickupTime;
+    float progress = 1 - pickupTime;
     for (int i = 0; i < 8; i++)
     {
-        float a = i * PI / 4;
+        float angle = i * PI / 4;
+        float x = pickupPos.x + cosf(angle) * (10 + progress * 32);
+        float y = pickupPos.y + 10 + sinf(angle) * (6 + progress * 20);
         setHex(0xe6c779, pickupTime);
-        circle(pickupPos.x + cosf(a) * (10 + k * 32),
-               pickupPos.y + 10 + sinf(a) * (6 + k * 20), 2 * pickupTime);
+        circle(x, y, 2 * pickupTime);
     }
     setHex(0xfff0bf, pickupTime);
-    DrawTextCentered(pickupPos.x, pickupPos.y + 38 + k * 25, "COLLECTED", FONT_SMALL);
+    DrawTextCentered(pickupPos.x, pickupPos.y + 38 + progress * 25, "COLLECTED", FONT_SMALL);
 }
 
-// Draws the museum, everyone in it and the in-world markers.
-// Coordinates here are world units (0..1000, 0..478).
-void drawWorld(bool showPlayer)
+static float wallDepth(Rect wall)
 {
-    drawGround(worldTime);
-    if (showPlayer)
-        drawGoalMarker();
-    for (int i = 0; i < guardCount; i++)
-        drawVisionCone(guards[i]);
+    bool lying = wall.w >= wall.h;
+    if (lying)
+        return wall.y;
+    return WORLD_H;
+}
 
-    // ---- build the depth list ----
-    depthCount = 0;
+static void addSceneryDepths()
+{
     for (int i = 0; i < map.bushCount; i++)
         addDepth(map.bushes[i].p.y, D_BUSH, i);
     for (int i = 0; i < map.tableCount; i++)
@@ -1059,35 +1209,59 @@ void drawWorld(bool showPlayer)
     for (int i = 0; i < map.buildingCount; i++)
         addDepth(map.buildings[i].r.y, D_BUILDING, i);
     for (int i = 0; i < map.wallCount; i++)
-    {
-        Rect w = map.walls[i];
-        addDepth(w.w >= w.h ? w.y : WORLD_H, D_WALL, i); // side walls always behind
-    }
+        addDepth(wallDepth(map.walls[i]), D_WALL, i);
     if (map.hasGate)
         addDepth(0, D_GATE, 0);
-    if (map.fieldCount > 0)
-    {
-        addDepth(ballPos().y, D_BALL, 0);
-        for (int i = 0; i < 4; i++)
-            addDepth(footballerPos(i).y, D_PLAYER_FOOTBALL, i);
-    }
-    Vec2 dir;
+}
+
+static void addGardenDepths()
+{
+    if (map.fieldCount == 0)
+        return;
+    for (int i = 0; i < 4; i++)
+        addDepth(gardenSpot(map.fields[0], i).y - 6, D_STATUE, i);
+    Vec2 unusedDir;
+    for (int i = 0; i < 4; i++)
+        addDepth(artVisitorPos(i, &unusedDir).y, D_ART_VISITOR, i);
+}
+
+static void addPeopleDepths(bool showPlayer)
+{
+    Vec2 unusedDir;
     for (int i = 0; i < crowdCount; i++)
-        addDepth(crowdPos(i, &dir).y, D_CROWD, i);
+        addDepth(crowdPos(i, &unusedDir).y, D_CROWD, i);
     for (int i = 0; i < NPC_COUNT; i++)
-        addDepth(npcs[i].position.y, D_NPC, i);
+        if (npcs[i].here)
+            addDepth(npcs[i].position.y, D_NPC, i);
     for (int i = 0; i < catCount; i++)
         addDepth(catPose(i).position.y, D_CAT, i);
     if (showPlayer)
         addDepth(player.pos.y, D_PLAYER, 0);
     for (int i = 0; i < guardCount; i++)
         addDepth(guards[i].pos.y, D_GUARD, i);
+}
 
+static void drawSortedByDepth(bool showPlayer)
+{
+    depthCount = 0;
+    addSceneryDepths();
+    addGardenDepths();
+    addPeopleDepths(showPlayer);
     sortDepth();
     for (int i = 0; i < depthCount; i++)
         drawDepthItem(depthItems[i]);
+}
 
-    drawCanopies(worldTime); // tree tops, lamp light, clouds
+void drawWorld(bool showPlayer)
+{
+    drawGround(worldTime);
+    if (showPlayer)
+        drawGoalMarker();
+    for (int i = 0; i < guardCount; i++)
+        drawVisionCone(guards[i]);
+
+    drawSortedByDepth(showPlayer);
+    drawCanopies(worldTime);
 
     if (showDebug)
     {
@@ -1096,9 +1270,11 @@ void drawWorld(bool showPlayer)
             drawGuardRoute(guards[i]);
     }
     if (showPlayer)
+    {
         drawWorldOverlays();
-    if (showPlayer && pickupTime > 0)
-        drawPickupSparkle();
+        if (pickupTime > 0)
+            drawPickupSparkle();
+    }
     if (catcher >= 0)
         drawSpeechBubble(guards[catcher]);
 }

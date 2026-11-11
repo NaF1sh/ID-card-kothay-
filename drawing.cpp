@@ -1,15 +1,6 @@
-// ============================================================
-// drawing.cpp
-// Small math helpers, colours, and the basic shapes used by
-// every other file (circle, rectangle, line, triangle, text).
-// Everything is drawn with glBegin / glEnd primitives.
-// ============================================================
-
 #include "game.h"
 
-// ============================================================
-// VECTOR MATH
-// ============================================================
+#define STROKE_FONT_HEIGHT 119.05f
 
 Vec2 makeVec(float x, float y)
 {
@@ -28,9 +19,9 @@ float vcross(Vec2 a, Vec2 b) { return a.x * b.y - a.y * b.x; }
 
 Vec2 vnormal(Vec2 a)
 {
-    float l = vlength(a);
-    if (l > 0.000001f)
-        return makeVec(a.x / l, a.y / l);
+    float length = vlength(a);
+    if (length > 0.000001f)
+        return makeVec(a.x / length, a.y / length);
     return makeVec(0, 0);
 }
 
@@ -43,25 +34,41 @@ float clampf(float v, float lo, float hi)
     return v;
 }
 
-float minf(float a, float b) { return a < b ? a : b; }
-float maxf(float a, float b) { return a > b ? a : b; }
+float minf(float a, float b)
+{
+    if (a < b)
+        return a;
+    return b;
+}
+
+float maxf(float a, float b)
+{
+    if (a > b)
+        return a;
+    return b;
+}
+
 float degToRad(float d) { return d * PI / 180.0f; }
 float radToDeg(float r) { return r * 180.0f / PI; }
 
 bool rectContains(Rect r, Vec2 p)
 {
-    return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
+    bool insideX = p.x >= r.x && p.x <= r.x + r.w;
+    bool insideY = p.y >= r.y && p.y <= r.y + r.h;
+    return insideX && insideY;
 }
 
 bool rectsOverlap(Rect a, Rect b)
 {
-    return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+    bool overlapX = a.x < b.x + b.w && b.x < a.x + a.w;
+    bool overlapY = a.y < b.y + b.h && b.y < a.y + a.h;
+    return overlapX && overlapY;
 }
 
-Rect rectExpand(Rect r, float m)
+Rect rectExpand(Rect r, float margin)
 {
-    Rect e = {r.x - m, r.y - m, r.w + 2 * m, r.h + 2 * m};
-    return e;
+    Rect bigger = {r.x - margin, r.y - margin, r.w + 2 * margin, r.h + 2 * margin};
+    return bigger;
 }
 
 Vec2 rectCenter(Rect r)
@@ -69,21 +76,14 @@ Vec2 rectCenter(Rect r)
     return makeVec(r.x + r.w * 0.5f, r.y + r.h * 0.5f);
 }
 
-// The same "random" number every frame for the same (a, b).
-// Used to scatter grass and flowers without storing them.
 float hash01(int a, int b)
 {
-    unsigned int h = (unsigned int)a * 374761393u + (unsigned int)b * 668265263u;
-    h = (h ^ (h >> 13)) * 1274126177u;
-    h ^= h >> 16;
-    return (h & 0xFFFFFF) / (float)0x1000000;
+    unsigned int hash = (unsigned int)a * 374761393u + (unsigned int)b * 668265263u;
+    hash = (hash ^ (hash >> 13)) * 1274126177u;
+    hash ^= hash >> 16;
+    return (hash & 0xFFFFFF) / (float)0x1000000;
 }
 
-// ============================================================
-// COLOURS
-// ============================================================
-
-// hexColor(0xff8800) -> orange
 Color hexColor(unsigned int rgb, float a)
 {
     Color c;
@@ -106,8 +106,9 @@ Color mixColor(Color a, Color b, float t)
 
 Color darker(Color c, float amount)
 {
-    Color d = {c.r * (1 - amount), c.g * (1 - amount), c.b * (1 - amount), c.a};
-    return d;
+    float keep = 1 - amount;
+    Color dark = {c.r * keep, c.g * keep, c.b * keep, c.a};
+    return dark;
 }
 
 Color lighter(Color c, float amount)
@@ -132,18 +133,22 @@ void setHex(unsigned int rgb, float a)
     setColor(hexColor(rgb, a));
 }
 
-// ============================================================
-// CIRCLE (filled ellipse with GL_TRIANGLE_FAN)
-// ============================================================
-
-int autoSegments(float r)
+static int autoSegments(float radius)
 {
-    int s = (int)(r * pixelsPerUnit * 0.6f) + 10;
-    if (s < 10)
-        s = 10;
-    if (s > 72)
-        s = 72;
-    return s;
+    int segments = (int)(radius * pixelsPerUnit * 0.6f) + 10;
+    if (segments < 10)
+        segments = 10;
+    if (segments > 72)
+        segments = 72;
+    return segments;
+}
+
+static void ellipseVertex(float cx, float cy, float rx, float ry, int i, int segments)
+{
+    float theta = 2.0f * PI * float(i) / float(segments);
+    float x = cx + rx * cosf(theta);
+    float y = cy + ry * sinf(theta);
+    glVertex2f(x, y);
 }
 
 void DrawCircle(float cx, float cy, float rx, float ry, int num_segments)
@@ -154,12 +159,7 @@ void DrawCircle(float cx, float cy, float rx, float ry, int num_segments)
     glBegin(GL_TRIANGLE_FAN);
     glVertex2f(cx, cy);
     for (int i = 0; i <= num_segments; i++)
-    {
-        float theta = 2.0f * PI * float(i) / float(num_segments);
-        float x = rx * cosf(theta);
-        float y = ry * sinf(theta);
-        glVertex2f(x + cx, y + cy);
-    }
+        ellipseVertex(cx, cy, rx, ry, i, num_segments);
     glEnd();
 }
 
@@ -170,44 +170,38 @@ void circle(float cx, float cy, float r)
 
 void DrawCircleOutline(float cx, float cy, float rx, float ry, float width)
 {
-    int n = autoSegments(maxf(rx, ry));
+    int segments = autoSegments(maxf(rx, ry));
     glLineWidth(width);
     glBegin(GL_LINE_LOOP);
-    for (int i = 0; i < n; i++)
-    {
-        float theta = 2.0f * PI * float(i) / float(n);
-        glVertex2f(cx + rx * cosf(theta), cy + ry * sinf(theta));
-    }
+    for (int i = 0; i < segments; i++)
+        ellipseVertex(cx, cy, rx, ry, i, segments);
     glEnd();
 }
 
-// Centre colour fading to the rim colour: soft shadows and glows
 void DrawSoftCircle(float cx, float cy, float rx, float ry, Color inner, Color outer)
 {
-    int n = autoSegments(maxf(rx, ry));
+    int segments = autoSegments(maxf(rx, ry));
     glBegin(GL_TRIANGLE_FAN);
     setColor(inner);
     glVertex2f(cx, cy);
     setColor(outer);
-    for (int i = 0; i <= n; i++)
-    {
-        float theta = 2.0f * PI * float(i) / float(n);
-        glVertex2f(cx + rx * cosf(theta), cy + ry * sinf(theta));
-    }
+    for (int i = 0; i <= segments; i++)
+        ellipseVertex(cx, cy, rx, ry, i, segments);
     glEnd();
 }
 
-// ============================================================
-// RECTANGLES
-// ============================================================
-
-void DrawRect(float x, float y, float w, float h)
+static void rectVertices(float x, float y, float w, float h)
 {
-    glBegin(GL_QUADS);
     glVertex2f(x, y);
     glVertex2f(x + w, y);
     glVertex2f(x + w, y + h);
     glVertex2f(x, y + h);
+}
+
+void DrawRect(float x, float y, float w, float h)
+{
+    glBegin(GL_QUADS);
+    rectVertices(x, y, w, h);
     glEnd();
 }
 
@@ -220,14 +214,10 @@ void DrawRectOutline(float x, float y, float w, float h, float width)
 {
     glLineWidth(width);
     glBegin(GL_LINE_LOOP);
-    glVertex2f(x, y);
-    glVertex2f(x + w, y);
-    glVertex2f(x + w, y + h);
-    glVertex2f(x, y + h);
+    rectVertices(x, y, w, h);
     glEnd();
 }
 
-// Two colours: bottom edge and top edge (smooth shading)
 void DrawGradientRect(float x, float y, float w, float h, Color bottom, Color top)
 {
     glBegin(GL_QUADS);
@@ -240,29 +230,36 @@ void DrawGradientRect(float x, float y, float w, float h, Color bottom, Color to
     glEnd();
 }
 
-// The corner points of a rounded rectangle (4 quarter circles)
-void roundRectVertices(float x, float y, float w, float h, float r)
+static float cornerRadius(float w, float h, float radius)
 {
-    r = minf(r, minf(w, h) * 0.5f);
-    int seg = autoSegments(r) / 4;
-    if (seg < 3)
-        seg = 3;
-    float cx[4] = {x + w - r, x + w - r, x + r, x + r};
-    float cy[4] = {y + r, y + h - r, y + h - r, y + r};
-    float start[4] = {-90, 0, 90, 180};
+    float halfShortSide = minf(w, h) * 0.5f;
+    return minf(radius, halfShortSide);
+}
+
+static void roundRectVertices(float x, float y, float w, float h, float radius)
+{
+    float r = cornerRadius(w, h, radius);
+    int segments = autoSegments(r) / 4;
+    if (segments < 3)
+        segments = 3;
+
+    float cornerX[4] = {x + w - r, x + w - r, x + r, x + r};
+    float cornerY[4] = {y + r, y + h - r, y + h - r, y + r};
+    float startAngle[4] = {-90, 0, 90, 180};
+
     for (int c = 0; c < 4; c++)
     {
-        for (int i = 0; i <= seg; i++)
+        for (int i = 0; i <= segments; i++)
         {
-            float a = degToRad(start[c] + 90.0f * i / seg);
-            glVertex2f(cx[c] + cosf(a) * r, cy[c] + sinf(a) * r);
+            float angle = degToRad(startAngle[c] + 90.0f * i / segments);
+            glVertex2f(cornerX[c] + cosf(angle) * r, cornerY[c] + sinf(angle) * r);
         }
     }
 }
 
 void DrawRoundRect(float x, float y, float w, float h, float radius)
 {
-    float r = minf(radius, minf(w, h) * 0.5f);
+    float r = cornerRadius(w, h, radius);
     glBegin(GL_TRIANGLE_FAN);
     glVertex2f(x + w * 0.5f, y + h * 0.5f);
     roundRectVertices(x, y, w, h, radius);
@@ -278,37 +275,39 @@ void DrawRoundRectOutline(float x, float y, float w, float h, float radius, floa
     glEnd();
 }
 
-// ============================================================
-// ARC, SECTOR, LINES, TRIANGLE, QUAD
-// ============================================================
+static int arcSegments(float r, float startDeg, float endDeg)
+{
+    int degrees = (int)fabsf(endDeg - startDeg);
+    int segments = autoSegments(r) * degrees / 360;
+    if (segments < 4)
+        segments = 4;
+    return segments;
+}
+
+static void arcVertices(float cx, float cy, float r, float startDeg, float endDeg, int segments)
+{
+    for (int i = 0; i <= segments; i++)
+    {
+        float angle = degToRad(startDeg + (endDeg - startDeg) * i / segments);
+        glVertex2f(cx + cosf(angle) * r, cy + sinf(angle) * r);
+    }
+}
 
 void DrawArc(float cx, float cy, float r, float startDeg, float endDeg, float width)
 {
-    int n = autoSegments(r) * (int)fabsf(endDeg - startDeg) / 360;
-    if (n < 4)
-        n = 4;
+    int segments = arcSegments(r, startDeg, endDeg);
     glLineWidth(width);
     glBegin(GL_LINE_STRIP);
-    for (int i = 0; i <= n; i++)
-    {
-        float a = degToRad(startDeg + (endDeg - startDeg) * i / n);
-        glVertex2f(cx + cosf(a) * r, cy + sinf(a) * r);
-    }
+    arcVertices(cx, cy, r, startDeg, endDeg, segments);
     glEnd();
 }
 
 void DrawSector(float cx, float cy, float r, float startDeg, float endDeg)
 {
-    int n = autoSegments(r) * (int)fabsf(endDeg - startDeg) / 360;
-    if (n < 4)
-        n = 4;
+    int segments = arcSegments(r, startDeg, endDeg);
     glBegin(GL_TRIANGLE_FAN);
     glVertex2f(cx, cy);
-    for (int i = 0; i <= n; i++)
-    {
-        float a = degToRad(startDeg + (endDeg - startDeg) * i / n);
-        glVertex2f(cx + cosf(a) * r, cy + sinf(a) * r);
-    }
+    arcVertices(cx, cy, r, startDeg, endDeg, segments);
     glEnd();
 }
 
@@ -321,17 +320,16 @@ void DrawLine(float x1, float y1, float x2, float y2, float width)
     glEnd();
 }
 
-// A line drawn as a thin quad, so its width scales with the window
 void DrawThickLine(float x1, float y1, float x2, float y2, float width)
 {
-    Vec2 d = vnormal(makeVec(x2 - x1, y2 - y1));
-    float nx = -d.y * width * 0.5f;
-    float ny = d.x * width * 0.5f;
+    Vec2 direction = vnormal(makeVec(x2 - x1, y2 - y1));
+    float sideX = -direction.y * width * 0.5f;
+    float sideY = direction.x * width * 0.5f;
     glBegin(GL_QUADS);
-    glVertex2f(x1 + nx, y1 + ny);
-    glVertex2f(x2 + nx, y2 + ny);
-    glVertex2f(x2 - nx, y2 - ny);
-    glVertex2f(x1 - nx, y1 - ny);
+    glVertex2f(x1 + sideX, y1 + sideY);
+    glVertex2f(x2 + sideX, y2 + sideY);
+    glVertex2f(x2 - sideX, y2 - sideY);
+    glVertex2f(x1 - sideX, y1 - sideY);
     glEnd();
 }
 
@@ -354,51 +352,78 @@ void DrawQuad(float x1, float y1, float x2, float y2, float x3, float y3, float 
     glEnd();
 }
 
-// ============================================================
-// TEXT
-// ============================================================
-
-void *fontFor(int font)
+static void *fontFor(int font)
 {
-    switch (font)
-    {
-    case FONT_SMALL:
+    if (font == FONT_SMALL)
         return GLUT_BITMAP_HELVETICA_10;
-    case FONT_MEDIUM:
+    if (font == FONT_MEDIUM)
         return GLUT_BITMAP_HELVETICA_18;
-    case FONT_LARGE:
+    if (font == FONT_LARGE)
         return GLUT_BITMAP_TIMES_ROMAN_24;
-    default:
-        return GLUT_BITMAP_HELVETICA_12;
-    }
+    return GLUT_BITMAP_HELVETICA_12;
 }
 
 void DrawText(float x, float y, const char *s, int font)
 {
+    void *glutFont = fontFor(font);
     glRasterPos2f(x, y);
     for (int i = 0; s[i] != '\0'; i++)
-        glutBitmapCharacter(fontFor(font), s[i]);
+        glutBitmapCharacter(glutFont, s[i]);
 }
 
-// Bitmap fonts have a fixed size in pixels, so divide by the
-// window scale to get the width in view units.
 float TextWidth(const char *s, int font)
 {
-    int w = 0;
+    void *glutFont = fontFor(font);
+    int widthInPixels = 0;
     for (int i = 0; s[i] != '\0'; i++)
-        w += glutBitmapWidth(fontFor(font), s[i]);
-    return w / pixelsPerUnit;
+        widthInPixels += glutBitmapWidth(glutFont, s[i]);
+    return widthInPixels / pixelsPerUnit;
 }
 
 void DrawTextCentered(float cx, float y, const char *s, int font)
 {
-    DrawText(cx - TextWidth(s, font) * 0.5f, y, s, font);
+    float halfWidth = TextWidth(s, font) * 0.5f;
+    DrawText(cx - halfWidth, y, s, font);
 }
 
-// Stroke text is made of lines, so it can be scaled and rotated
+static const int fontsBigToSmall[4] = {FONT_LARGE, FONT_MEDIUM, FONT_NORMAL, FONT_SMALL};
+
+static int firstFontToTry(int font)
+{
+    for (int i = 0; i < 3; i++)
+    {
+        if (fontsBigToSmall[i] == font)
+            return i;
+    }
+    return 3;
+}
+
+static void drawShrunkStrokeText(float cx, float y, const char *s, float maxW)
+{
+    float height = 9;
+    float width = StrokeTextWidth(s, height);
+    if (width > maxW)
+        height = height * maxW / width;
+    float finalWidth = StrokeTextWidth(s, height);
+    DrawStrokeText(cx - finalWidth * 0.5f, y, height, s, 1);
+}
+
+void DrawTextFit(float cx, float y, const char *s, int font, float maxW)
+{
+    for (int i = firstFontToTry(font); i < 4; i++)
+    {
+        if (TextWidth(s, fontsBigToSmall[i]) <= maxW)
+        {
+            DrawTextCentered(cx, y, s, fontsBigToSmall[i]);
+            return;
+        }
+    }
+    drawShrunkStrokeText(cx, y, s, maxW);
+}
+
 void DrawStrokeText(float x, float y, float height, const char *s, float width)
 {
-    float scale = height / 119.05f;
+    float scale = height / STROKE_FONT_HEIGHT;
     glLineWidth(width);
     glPushMatrix();
     glTranslatef(x, y, 0);
@@ -410,15 +435,16 @@ void DrawStrokeText(float x, float y, float height, const char *s, float width)
 
 float StrokeTextWidth(const char *s, float height)
 {
-    float w = 0;
+    float width = 0;
     for (int i = 0; s[i] != '\0'; i++)
-        w += glutStrokeWidth(GLUT_STROKE_ROMAN, s[i]);
-    return w * height / 119.05f;
+        width += glutStrokeWidth(GLUT_STROKE_ROMAN, s[i]);
+    return width * height / STROKE_FONT_HEIGHT;
 }
 
-// 75.4 seconds -> "1:15"
 void formatTime(float seconds, char *out)
 {
-    int s = (int)seconds;
-    sprintf(out, "%d:%02d", s / 60, s % 60);
+    int totalSeconds = (int)seconds;
+    int minutes = totalSeconds / 60;
+    int secondsLeft = totalSeconds % 60;
+    sprintf(out, "%d:%02d", minutes, secondsLeft);
 }

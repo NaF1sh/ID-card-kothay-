@@ -13,16 +13,18 @@ the gold exit without being caught by the guards.
 | `drawing.cpp` | Vector math, colours, `DrawCircle` and other primitives, text |
 | `collision.cpp` | Circle/rectangle collision, line of sight, A* path finding |
 | `level.cpp` | The 4 levels: buildings, trees, guards, evidence, exit |
-| `map.cpp` | Draws the scenery (grass, roads, lake, buildings, trees, gate...) |
+| `map.cpp` | Draws the scenery (grass, roads, lake, sculpture garden, buildings, signs, trees, gate...) |
 | `characters.cpp` | Draws people, NPCs and cats; NPC dialogue lines |
 | `player.cpp` | Player movement, sprint and stamina |
 | `guard.cpp` | Guard patrol, vision cone, detection, chase and search |
 | `gameplay.cpp` | Game flow, scoring, collecting, talking, distractions, depth-sorted world |
 | `ui.cpp` | Menus, HUD, case file, dialogue box, result screens |
 | `scoreboard.cpp` | Top 10 saved in `scoreboard.txt` |
-| `sound.cpp` | Sound effects from `assets/audio` (Windows only) |
+| `sound.cpp` | Sound effects and music from `assets/audio` (Windows and Linux) |
 
 ## Build
+
+A ready Windows build is included: `MuseumDetective_Windows.zip` (unzip it and run `MuseumDetective.exe`).
 
 Windows (MSYS2 / Code::Blocks with freeglut):
 
